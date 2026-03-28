@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.reconstructions import router as reconstructions_router
+from app.api.workflows import router as workflows_router
 from app.core.config import settings
 from app.core.database import Base, engine, ensure_runtime_schema
 from app.schemas import HealthResponse
@@ -47,3 +48,4 @@ def health() -> HealthResponse:
 
 
 app.include_router(reconstructions_router)
+app.include_router(workflows_router)

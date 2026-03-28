@@ -1,48 +1,433 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   absoluteArtifactUrl,
   deleteReconstruction,
-  getPipelines,
+  getIterationHistory,
+  getMetrics,
   getReconstructions,
+  getWorkflows,
   retryReconstruction,
-  uploadVideo,
+  startWorkflow,
+  stopWorkflow,
+  deleteWorkflow,
 } from "@/lib/api";
-import type { PipelineInfo, ReconstructionDetail } from "@/lib/types";
+import type { IterationHistoryResponse, IterationSummary, MetricsResponse, ReconstructionDetail, ReconstructionParams, WorkflowDetail } from "@/lib/types";
 
 
 function formatTime(value: string | null): string {
-  if (!value) {
-    return "-";
-  }
+  if (!value) return "-";
   return new Date(value).toLocaleString();
 }
-
 
 function prettyStatus(value: string): string {
   return value.replaceAll("_", " ");
 }
 
 
-export default function ReconstructionDashboard() {
-  const [pipelines, setPipelines] = useState<PipelineInfo[]>([]);
-  const [reconstructions, setReconstructions] = useState<ReconstructionDetail[]>([]);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+/* ── Workflow pipeline steps for visualization ── */
+const WORKFLOW_STEPS = [
+  { key: "upload", label: "Upload", agents: [] as string[] },
+  { key: "runner-1", label: "Agent A (Runner)", agents: ["runner"] },
+  { key: "evaluator", label: "Agent B (Evaluator)", agents: ["evaluator"] },
+  { key: "runner-retry", label: "Agent A (Retry)", agents: ["runner"] },
+  { key: "done", label: "Done", agents: [] as string[] },
+] as const;
+
+function agentDisplayName(agent: string | null): string {
+  if (agent === "runner") return "Agent A (Runner)";
+  if (agent === "evaluator") return "Agent B (Evaluator)";
+  return agent ?? "";
+}
+
+function getActiveStepIndex(w: WorkflowDetail): number {
+  if (w.status === "completed") return 4;
+  if (w.status === "failed") return -1;
+  if (w.status === "pending") return 0;
+  if (w.current_agent === "runner" && w.iteration <= 1) return 1;
+  if (w.current_agent === "evaluator") return 2;
+  if (w.current_agent === "runner" && w.iteration > 1) return 3;
+  return 1;
+}
+
+function WorkflowPipeline({ workflow, onStop, onDelete }: { workflow: WorkflowDetail; onStop?: (id: string) => void; onDelete?: (id: string) => void }) {
+  const activeIdx = getActiveStepIndex(workflow);
+  const isFailed = workflow.status === "failed";
+  const isActive = workflow.status === "running" || workflow.status === "pending";
+
+  return (
+    <div className="wf-card">
+      <div className="wf-header">
+        <div>
+          <strong>{workflow.scene_name}</strong>
+          <span className="wf-filename">{workflow.video_filename}</span>
+        </div>
+        <div className="wf-header-right">
+          {isActive && onStop ? (
+            <button type="button" className="stop-btn" onClick={() => onStop(workflow.id)}>
+              &#x25A0; Stop
+            </button>
+          ) : null}
+          {!isActive && onDelete ? (
+            <button type="button" className="delete-btn" onClick={() => onDelete(workflow.id)}>
+              &#x2715; Delete
+            </button>
+          ) : null}
+          <span className={`status-pill status-${workflow.status === "running" ? "queued" : workflow.status}`}>
+            {workflow.status}{workflow.iteration > 0 ? ` · iter ${workflow.iteration}/${workflow.max_iterations}` : ""}
+          </span>
+        </div>
+      </div>
+
+      <div className="wf-pipeline">
+        {WORKFLOW_STEPS.map((step, idx) => {
+          let cls = "wf-step";
+          if (isFailed && idx === activeIdx) cls += " wf-step-failed";
+          else if (idx < activeIdx) cls += " wf-step-done";
+          else if (idx === activeIdx) cls += " wf-step-active";
+
+          return (
+            <Fragment key={step.key}>
+              {idx > 0 ? <div className={`wf-connector${idx <= activeIdx ? " wf-connector-done" : ""}`} /> : null}
+              <div className={cls}>
+                <div className="wf-dot" />
+                <span className="wf-label">{step.label}</span>
+              </div>
+            </Fragment>
+          );
+        })}
+      </div>
+
+      {workflow.current_step ? (
+        <div className="wf-detail">
+          {workflow.current_agent ? <strong>{agentDisplayName(workflow.current_agent)}</strong> : null}
+          {" "}{workflow.current_step}
+          {workflow.last_verdict ? <span className="wf-verdict"> · verdict: {workflow.last_verdict}</span> : null}
+        </div>
+      ) : null}
+
+      {workflow.error_message ? <div className="error-inline">{workflow.error_message}</div> : null}
+
+      {workflow.last_reason ? (
+        <div className="wf-reason">{workflow.last_reason}</div>
+      ) : null}
+    </div>
+  );
+}
+
+
+/* ── Upload + start workflow ── */
+function WorkflowStarter({ onStarted }: { onStarted: () => void }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [sceneName, setSceneName] = useState("");
+  const [maxIter, setMaxIter] = useState(3);
+  const [uploading, setUploading] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
-  const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragActive(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped && /\.(mov|mp4|m4v)$/i.test(dropped.name)) {
+      setFile(dropped);
+      if (!sceneName) setSceneName(dropped.name.replace(/\.[^.]+$/, ""));
+    }
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!file) return;
+    setError(null);
+    setUploading(true);
+    setUploadPct(0);
+    try {
+      await startWorkflow(file, sceneName || file.name.replace(/\.[^.]+$/, ""), maxIter, setUploadPct);
+      setFile(null);
+      setSceneName("");
+      onStarted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start workflow");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <form className="wf-starter" onSubmit={handleSubmit}>
+      <div
+        className={`wf-dropzone${dragActive ? " wf-dropzone-active" : ""}${file ? " wf-dropzone-has-file" : ""}`}
+        onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+        onDragLeave={() => setDragActive(false)}
+        onDrop={handleDrop}
+        onClick={() => document.getElementById("wf-file-input")?.click()}
+      >
+        {file ? (
+          <div className="wf-file-info">
+            <span className="wf-file-icon">&#x1f3ac;</span>
+            <span>{file.name}</span>
+            <span className="subtle-line">{(file.size / 1024 / 1024).toFixed(1)} MB</span>
+          </div>
+        ) : (
+          <div className="wf-drop-prompt">
+            <span className="wf-drop-icon">&#x2B06;</span>
+            <span>Drop a .MOV file here or click to browse</span>
+          </div>
+        )}
+        <input
+          id="wf-file-input"
+          type="file"
+          accept="video/quicktime,video/mp4,.mov,.mp4,.m4v"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) {
+              setFile(f);
+              if (!sceneName) setSceneName(f.name.replace(/\.[^.]+$/, ""));
+            }
+          }}
+        />
+      </div>
+      <div className="wf-fields">
+        <label>
+          <span>Scene name</span>
+          <input value={sceneName} onChange={(e) => setSceneName(e.target.value)} placeholder="my-scene" />
+        </label>
+        <label>
+          <span>Max iterations</span>
+          <input type="number" min={1} max={10} value={maxIter} onChange={(e) => setMaxIter(Number(e.target.value))} />
+        </label>
+        <button type="submit" disabled={!file || uploading}>
+          {uploading ? `Uploading ${uploadPct}%` : "Start Workflow"}
+        </button>
+      </div>
+      {uploading ? (
+        <div className="progress-track" style={{ marginTop: 8 }}>
+          <div className="progress-fill" style={{ width: `${uploadPct}%` }} />
+        </div>
+      ) : null}
+      {error ? <p className="error-text">{error}</p> : null}
+    </form>
+  );
+}
+
+
+/* ── Metric helpers ── */
+function MetricValue({ label, value, good, diff }: { label: string; value: string; good?: boolean; diff?: string }) {
+  return (
+    <div className="metric-item">
+      <span className="metric-label">{label}</span>
+      <span className={`metric-value${good === true ? " metric-good" : good === false ? " metric-warn" : ""}`}>
+        {value}
+        {diff ? <span className="metric-diff">{diff}</span> : null}
+      </span>
+    </div>
+  );
+}
+
+function ParamDiff({ label, current, previous }: { label: string; current: string; previous?: string }) {
+  const changed = previous != null && previous !== current;
+  return (
+    <div className="metric-item">
+      <span className="metric-label">{label}</span>
+      <span className={`metric-value${changed ? " metric-changed" : ""}`}>
+        {current}
+        {changed ? <span className="metric-diff">was {previous}</span> : null}
+      </span>
+    </div>
+  );
+}
+
+function metricDiffStr(current: number | undefined, previous: number | undefined): string | undefined {
+  if (current == null || previous == null) return undefined;
+  const delta = current - previous;
+  if (Math.abs(delta) < 0.0001) return undefined;
+  const sign = delta > 0 ? "+" : "";
+  return `${sign}${delta.toFixed(4)}`;
+}
+
+function paramStr(params: ReconstructionParams, key: keyof ReconstructionParams, defaultVal: string): string {
+  const v = params[key];
+  if (v == null) return `${defaultVal} (default)`;
+  return String(v);
+}
+
+
+/* ── Iteration history component ── */
+function IterationTimeline({ history }: { history: IterationHistoryResponse }) {
+  if (!history.iterations.length) return null;
+
+  function fmtDelta(current: number | null, previous: number | null): string | undefined {
+    if (current == null || previous == null) return undefined;
+    const d = current - previous;
+    if (Math.abs(d) < 0.0001) return undefined;
+    return `${d > 0 ? "+" : ""}${d.toFixed(4)}`;
+  }
+
+  function deltaClass(current: number | null, previous: number | null, lowerIsBetter: boolean): string {
+    if (current == null || previous == null) return "";
+    const d = current - previous;
+    if (Math.abs(d) < 0.0001) return "";
+    const improved = lowerIsBetter ? d < 0 : d > 0;
+    return improved ? " metric-good" : " metric-warn";
+  }
+
+  return (
+    <div className="detail-section detail-full-width">
+      <h3>Iteration History ({history.iterations.length})</h3>
+      <div className="iter-timeline">
+        {history.iterations.map((iter: IterationSummary, idx: number) => {
+          const prev = idx > 0 ? history.iterations[idx - 1] : null;
+          return (
+            <div key={iter.iteration} className="iter-card">
+              <div className="iter-header">
+                <strong>Iteration {iter.iteration}</strong>
+                {iter.verdict ? (
+                  <span className={`status-pill ${iter.verdict === "ACCEPT" ? "status-completed" : "status-queued"}`}>
+                    {iter.verdict}
+                  </span>
+                ) : null}
+                {iter.ply_url ? (
+                  <a className="ply-link" href={absoluteArtifactUrl(iter.ply_url) ?? undefined} download onClick={(e) => e.stopPropagation()}>
+                    &#x2B07; PLY
+                  </a>
+                ) : null}
+              </div>
+              <div className="iter-metrics">
+                {iter.loss != null ? (
+                  <span className={deltaClass(iter.loss, prev?.loss ?? null, true)}>
+                    Loss: {iter.loss.toFixed(4)}
+                    {fmtDelta(iter.loss, prev?.loss ?? null) ? <span className="metric-diff">{fmtDelta(iter.loss, prev?.loss ?? null)}</span> : null}
+                  </span>
+                ) : null}
+                {iter.ssim != null ? (
+                  <span className={deltaClass(iter.ssim, prev?.ssim ?? null, false)}>
+                    SSIM: {iter.ssim.toFixed(4)}
+                    {fmtDelta(iter.ssim, prev?.ssim ?? null) ? <span className="metric-diff">{fmtDelta(iter.ssim, prev?.ssim ?? null)}</span> : null}
+                  </span>
+                ) : null}
+                {iter.num_gaussians != null ? (
+                  <span>Gaussians: {iter.num_gaussians.toLocaleString()}</span>
+                ) : null}
+              </div>
+              {/* Show changed params compared to previous */}
+              {prev ? (
+                <div className="iter-params-diff">
+                  {(Object.keys(iter.params) as (keyof ReconstructionParams)[]).map((key) => {
+                    const cur = iter.params[key];
+                    const prv = prev.params[key];
+                    if (cur == null && prv == null) return null;
+                    if (String(cur) === String(prv)) return null;
+                    return (
+                      <span key={key} className="metric-changed">
+                        {key.replace(/_/g, " ")}: {String(cur ?? "default")}
+                        <span className="metric-diff">was {String(prv ?? "default")}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {iter.reason ? <div className="iter-reason">{iter.reason}</div> : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+/* ── Detail panel ── */
+function DetailPanel({
+  item,
+  metrics,
+  prevItem,
+  prevMetrics,
+  iterHistory,
+}: {
+  item: ReconstructionDetail;
+  metrics: MetricsResponse | null;
+  prevItem: ReconstructionDetail | null;
+  prevMetrics: MetricsResponse | null;
+  iterHistory: IterationHistoryResponse | null;
+}) {
+  const p = item.processing_params;
+  const pp = prevItem?.processing_params;
+  const s = metrics?.summary;
+  const ps = prevMetrics?.summary;
+
+  // Parse agent notes and reverse so newest is on top
+  const noteLines = item.description ? item.description.split("\n").filter(Boolean).reverse() : [];
+
+  return (
+    <div className="detail-grid">
+      {/* All parameters with full change tracking */}
+      <div className="detail-section">
+        <h3>Parameters{prevItem ? ` (vs ${prevItem.name})` : ""}</h3>
+        <div className="param-grid">
+          <ParamDiff label="Frame Rate" current={paramStr(p, "frame_rate", "2.0")} previous={pp ? paramStr(pp, "frame_rate", "2.0") : undefined} />
+          <ParamDiff label="Max Epochs" current={paramStr(p, "fvdb_max_epochs", "40")} previous={pp ? paramStr(pp, "fvdb_max_epochs", "40") : undefined} />
+          <ParamDiff label="SH Degree" current={paramStr(p, "fvdb_sh_degree", "3")} previous={pp ? paramStr(pp, "fvdb_sh_degree", "3") : undefined} />
+          <ParamDiff label="Downsample" current={p.fvdb_image_downsample_factor != null ? `${p.fvdb_image_downsample_factor}x` : "6x (default)"} previous={pp ? (pp.fvdb_image_downsample_factor != null ? `${pp.fvdb_image_downsample_factor}x` : "6x (default)") : undefined} />
+          <ParamDiff label="Matcher Overlap" current={paramStr(p, "sequential_matcher_overlap", "12")} previous={pp ? paramStr(pp, "sequential_matcher_overlap", "12") : undefined} />
+          <ParamDiff label="Splat Only" current={paramStr(p, "splat_only_mode", "true")} previous={pp ? paramStr(pp, "splat_only_mode", "true") : undefined} />
+        </div>
+      </div>
+
+      {/* Training metrics with diffs */}
+      {s && Object.keys(s).length > 0 ? (
+        <div className="detail-section">
+          <h3>Training Metrics{ps ? ` (vs ${prevItem?.name})` : ""}</h3>
+          <div className="param-grid">
+            <MetricValue label="Loss" value={s["reconstruct/loss"]?.toFixed(4) ?? "\u2014"} good={s["reconstruct/loss"] != null ? s["reconstruct/loss"] < 0.25 : undefined} diff={metricDiffStr(s["reconstruct/loss"], ps?.["reconstruct/loss"])} />
+            <MetricValue label="SSIM" value={s["reconstruct/ssimloss"]?.toFixed(4) ?? "\u2014"} good={s["reconstruct/ssimloss"] != null ? s["reconstruct/ssimloss"] > 0.85 : undefined} diff={metricDiffStr(s["reconstruct/ssimloss"], ps?.["reconstruct/ssimloss"])} />
+            <MetricValue label="L1 Loss" value={s["reconstruct/l1loss"]?.toFixed(4) ?? "\u2014"} diff={metricDiffStr(s["reconstruct/l1loss"], ps?.["reconstruct/l1loss"])} />
+            <MetricValue label="Gaussians" value={s["reconstruct/num_gaussians"]?.toLocaleString() ?? "\u2014"} />
+            <MetricValue label="GPU Mem" value={s["reconstruct/mem_allocated"] != null ? `${s["reconstruct/mem_allocated"].toFixed(2)} GB` : "\u2014"} />
+            <MetricValue label="SH Degree" value={s["reconstruct/sh_degree"]?.toFixed(0) ?? "\u2014"} />
+          </div>
+        </div>
+      ) : null}
+
+      {/* Agent notes — newest first */}
+      {noteLines.length > 0 ? (
+        <div className="detail-section detail-full-width">
+          <h3>Agent Notes (newest first)</h3>
+          <div className="detail-notes">
+            {noteLines.map((line, i) => (
+              <p key={i} className={line.startsWith("[Eval") ? "note-eval" : ""}>{line}</p>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Iteration history */}
+      {iterHistory && iterHistory.iterations.length > 0 ? (
+        <IterationTimeline history={iterHistory} />
+      ) : null}
+    </div>
+  );
+}
+
+
+/* ── Main dashboard ── */
+export default function ReconstructionDashboard() {
+  const [reconstructions, setReconstructions] = useState<ReconstructionDetail[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowDetail[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [metricsMap, setMetricsMap] = useState<Record<string, MetricsResponse>>({});
+  const [iterHistoryMap, setIterHistoryMap] = useState<Record<string, IterationHistoryResponse>>({});
+  const [error, setError] = useState<string | null>(null);
+  const fetchedMetricsRef = useRef<Set<string>>(new Set());
+  const fetchedIterHistoryRef = useRef<Set<string>>(new Set());
 
   async function refresh() {
-    const [pipelineData, reconstructionData] = await Promise.all([
-      getPipelines(),
-      getReconstructions(),
-    ]);
-    setPipelines(pipelineData);
-    setReconstructions(reconstructionData);
+    const [recons, wfs] = await Promise.all([getReconstructions(), getWorkflows()]);
+    setReconstructions(recons);
+    setWorkflows(wfs);
   }
 
   useEffect(() => {
@@ -53,33 +438,51 @@ export default function ReconstructionDashboard() {
     return () => window.clearInterval(interval);
   }, []);
 
-  const activeJobs = useMemo(
-    () => reconstructions.filter((item) => !["completed", "failed"].includes(item.status)),
+  useEffect(() => {
+    for (const item of reconstructions) {
+      if (item.status === "completed" && !fetchedMetricsRef.current.has(item.id)) {
+        fetchedMetricsRef.current.add(item.id);
+        getMetrics(item.id)
+          .then((m) => setMetricsMap((prev) => ({ ...prev, [item.id]: m })))
+          .catch(() => undefined);
+      }
+      if (item.status === "completed" && !fetchedIterHistoryRef.current.has(item.id)) {
+        fetchedIterHistoryRef.current.add(item.id);
+        getIterationHistory(item.id)
+          .then((h) => setIterHistoryMap((prev) => ({ ...prev, [item.id]: h })))
+          .catch(() => undefined);
+      }
+    }
+  }, [reconstructions]);
+
+  const prevMap = useMemo(() => {
+    const map: Record<string, ReconstructionDetail> = {};
+    const sorted = [...reconstructions].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+    const groups: Record<string, ReconstructionDetail[]> = {};
+    for (const item of sorted) {
+      const baseName = item.name.replace(/\s*\(run\s+\d+\)$/i, "").trim();
+      if (!groups[baseName]) groups[baseName] = [];
+      groups[baseName].push(item);
+    }
+    for (const group of Object.values(groups)) {
+      for (let i = 1; i < group.length; i++) {
+        map[group[i].id] = group[i - 1];
+      }
+    }
+    return map;
+  }, [reconstructions]);
+
+  const activeCount = useMemo(
+    () => reconstructions.filter((item) => !["completed", "failed"].includes(item.status)).length,
     [reconstructions],
   );
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedFile) {
-      setError("Choose a MOV file before uploading.");
-      return;
-    }
-
-    setError(null);
-    setIsUploading(true);
-    setUploadPct(0);
-    try {
-      await uploadVideo(selectedFile, name || selectedFile.name.replace(/\.[^.]+$/, ""), description || undefined, setUploadPct);
-      setSelectedFile(null);
-      setName("");
-      setDescription("");
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-    } finally {
-      setIsUploading(false);
-    }
-  }
+  const activeWorkflows = useMemo(
+    () => workflows.filter((w) => w.status === "running" || w.status === "pending"),
+    [workflows],
+  );
 
   async function handleRetry(id: string) {
     setError(null);
@@ -101,95 +504,63 @@ export default function ReconstructionDashboard() {
     }
   }
 
+  async function handleStop(workflowId: string) {
+    setError(null);
+    try {
+      await stopWorkflow(workflowId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Stop failed");
+    }
+  }
+
+  async function handleDeleteWorkflow(workflowId: string) {
+    setError(null);
+    try {
+      await deleteWorkflow(workflowId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    }
+  }
+
   return (
     <main className="page-shell">
-      <section className="hero-card">
-        <div>
-          <p className="eyebrow">NemoReconstruct MVP</p>
-          <h1>Upload a video and get a splat reconstruction.</h1>
-          <p className="hero-copy">
-            This demo is intentionally narrow: one upload form, one reconstruction pipeline,
-            and one result artifact (PLY splat) for quick validation.
-          </p>
-        </div>
-        <div className="pipeline-panel">
-          <h2>Pipeline</h2>
-          {pipelines[0] ? (
-            <>
-              <p className="pipeline-name">{pipelines[0].name}</p>
-              <p>{pipelines[0].description}</p>
-              <ul className="step-list">
-                {pipelines[0].steps.map((step) => (
-                  <li key={step}>{prettyStatus(step)}</li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <p>Loading pipeline metadata...</p>
-          )}
-        </div>
+
+      {error ? <p className="error-text">{error}</p> : null}
+
+      {/* Agent workflow section */}
+      <section className="wf-section">
+        <h2>Agent Workflow</h2>
+        <p className="header-sub">Upload a .MOV video to start the multi-agent reconstruction pipeline</p>
+
+        <WorkflowStarter onStarted={() => refresh().catch(() => undefined)} />
+
+        {activeWorkflows.length > 0 ? (
+          <div className="wf-active">
+            <h3>Active Workflows</h3>
+            {activeWorkflows.map((w) => (
+              <WorkflowPipeline key={w.id} workflow={w} onStop={handleStop} />
+            ))}
+          </div>
+        ) : null}
+
+        {workflows.filter((w) => w.status === "completed" || w.status === "failed").length > 0 ? (
+          <details className="wf-history">
+            <summary>Past workflows ({workflows.filter((w) => w.status !== "running" && w.status !== "pending").length})</summary>
+            {workflows
+              .filter((w) => w.status !== "running" && w.status !== "pending")
+              .map((w) => (
+                <WorkflowPipeline key={w.id} workflow={w} onDelete={handleDeleteWorkflow} />
+              ))}
+          </details>
+        ) : null}
       </section>
 
-      <section className="grid-layout">
-        <form className="upload-card" onSubmit={handleSubmit}>
-          <h2>New Reconstruction</h2>
-          <label>
-            <span>Name</span>
-            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="warehouse-walkthrough" />
-          </label>
-          <label>
-            <span>Description</span>
-            <textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="Short note for agents or operators"
-              rows={4}
-            />
-          </label>
-          <label>
-            <span>Video</span>
-            <input
-              type="file"
-              accept="video/quicktime,video/mp4,.mov,.mp4,.m4v"
-              onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
-            />
-          </label>
-          {selectedFile ? <p className="selected-file">Selected: {selectedFile.name}</p> : null}
-          {isUploading ? (
-            <div className="progress-block">
-              <div className="progress-track">
-                <div className="progress-fill" style={{ width: `${uploadPct}%` }} />
-              </div>
-              <p>Uploading {uploadPct}%</p>
-            </div>
-          ) : null}
-          <button type="submit" disabled={isUploading}>
-            {isUploading ? "Uploading..." : "Start reconstruction"}
-          </button>
-          {error ? <p className="error-text">{error}</p> : null}
-        </form>
-
-        <aside className="status-card">
-          <h2>Current Queue</h2>
-          <p>{activeJobs.length} job(s) in flight</p>
-          <p className="status-note">
-            The backend runs a single reconstruction worker to keep GPU workloads serialized for fVDB.
-          </p>
-          <a href={`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8010"}/docs`} target="_blank" rel="noreferrer">
-            Open backend docs
-          </a>
-        </aside>
-      </section>
-
+      {/* Reconstructions table */}
       <section className="table-card">
         <div className="table-headline">
-          <div>
-            <h2>Reconstructions</h2>
-            <p>Poll every 5 seconds. This is the same data the SDKs return.</p>
-          </div>
-          <button type="button" onClick={() => refresh().catch((err: Error) => setError(err.message))}>
-            Refresh
-          </button>
+          <h2>Reconstructions</h2>
         </div>
         <div className="table-scroll">
           <table>
@@ -205,58 +576,101 @@ export default function ReconstructionDashboard() {
               </tr>
             </thead>
             <tbody>
-              {reconstructions.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <strong>{item.name}</strong>
-                    <div className="subtle-line">{item.source_video_filename}</div>
-                  </td>
-                  <td>
-                    <span className={`status-pill status-${item.status}`}>{prettyStatus(item.status)}</span>
-                    {item.error_message ? <div className="error-inline">{item.error_message}</div> : null}
-                  </td>
-                  <td>
-                    <div className="mini-progress">
-                      <div className="progress-track">
-                        <div className="progress-fill" style={{ width: `${item.processing_pct}%` }} />
-                      </div>
-                      <span>{item.processing_pct}%</span>
-                    </div>
-                    <div className="subtle-line">{item.processing_step ?? "waiting"}</div>
-                  </td>
-                  <td>{item.frame_count ?? "-"}</td>
-                  <td>{formatTime(item.updated_at)}</td>
-                  <td>
-                    <div className="artifact-links">
-                      {item.artifact_ply_url ? (
-                        <a href={absoluteArtifactUrl(item.artifact_ply_url) ?? undefined} target="_blank" rel="noreferrer">PLY</a>
-                      ) : null}
-                      {item.artifact_usdz_url ? (
-                        <a href={absoluteArtifactUrl(item.artifact_usdz_url) ?? undefined} target="_blank" rel="noreferrer">USDZ</a>
-                      ) : null}
-                      {item.artifact_bundle_url ? (
-                        <a href={absoluteArtifactUrl(item.artifact_bundle_url) ?? undefined} target="_blank" rel="noreferrer">ZIP</a>
-                      ) : null}
-                      {item.artifact_log_url ? (
-                        <a href={absoluteArtifactUrl(item.artifact_log_url) ?? undefined} target="_blank" rel="noreferrer">LOG</a>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="action-row">
-                      <button type="button" onClick={() => handleRetry(item.id)}>
-                        Retry
-                      </button>
-                      <button type="button" className="ghost" onClick={() => handleDelete(item.id)}>
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {reconstructions.map((item) => {
+                const m = metricsMap[item.id]?.summary;
+                const prev = prevMap[item.id];
+                const pm = prev ? metricsMap[prev.id]?.summary : undefined;
+                return (
+                  <Fragment key={item.id}>
+                    <tr
+                      onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
+                      className={expandedId === item.id ? "row-expanded" : "row-clickable"}
+                    >
+                      <td>
+                        <strong>{item.name}</strong>
+                        <div className="subtle-line">{item.source_video_filename}</div>
+                        {prev ? <div className="subtle-line iteration-tag">iteration of {prev.name}</div> : null}
+                      </td>
+                      <td>
+                        <span className={`status-pill status-${item.status}`}>{prettyStatus(item.status)}</span>
+                        {item.error_message ? <div className="error-inline">{item.error_message}</div> : null}
+                        {m && m["reconstruct/loss"] != null ? (
+                          <div className="inline-metrics">
+                            <span className={m["reconstruct/loss"] < 0.25 ? "metric-good" : "metric-warn"}>
+                              Loss {m["reconstruct/loss"].toFixed(3)}
+                            </span>
+                            {" \u00B7 "}
+                            <span className={(m["reconstruct/ssimloss"] ?? 0) > 0.85 ? "metric-good" : "metric-warn"}>
+                              SSIM {(m["reconstruct/ssimloss"] ?? 0).toFixed(3)}
+                            </span>
+                            {pm && pm["reconstruct/loss"] != null ? (
+                              <>
+                                {" \u00B7 "}
+                                <span className={(m["reconstruct/loss"] ?? 0) < (pm["reconstruct/loss"] ?? 0) ? "metric-good" : "metric-warn"}>
+                                  \u0394 {((m["reconstruct/loss"] ?? 0) - (pm["reconstruct/loss"] ?? 0)).toFixed(3)}
+                                </span>
+                              </>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td>
+                        <div className="mini-progress">
+                          <div className="progress-track">
+                            <div className="progress-fill" style={{ width: `${item.processing_pct}%` }} />
+                          </div>
+                          <span>{item.processing_pct}%</span>
+                        </div>
+                        <div className="subtle-line">{item.processing_step ?? "waiting"}</div>
+                      </td>
+                      <td>{item.frame_count ?? "-"}</td>
+                      <td>{formatTime(item.updated_at)}</td>
+                      <td>
+                        <div className="artifact-links">
+                          {item.artifact_ply_url ? (
+                            <a className="ply-link" href={absoluteArtifactUrl(item.artifact_ply_url) ?? undefined} download onClick={(e) => e.stopPropagation()}>&#x2B07; PLY</a>
+                          ) : null}
+                          {item.artifact_usdz_url ? (
+                            <a href={absoluteArtifactUrl(item.artifact_usdz_url) ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>USDZ</a>
+                          ) : null}
+                          {item.artifact_bundle_url ? (
+                            <a href={absoluteArtifactUrl(item.artifact_bundle_url) ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>ZIP</a>
+                          ) : null}
+                          {item.artifact_log_url ? (
+                            <a href={absoluteArtifactUrl(item.artifact_log_url) ?? undefined} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>LOG</a>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="action-row">
+                          <button type="button" onClick={(e) => { e.stopPropagation(); handleRetry(item.id); }}>
+                            Retry
+                          </button>
+                          <button type="button" className="ghost" onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}>
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {expandedId === item.id ? (
+                      <tr className="detail-row">
+                        <td colSpan={7}>
+                          <DetailPanel
+                            item={item}
+                            metrics={metricsMap[item.id] ?? null}
+                            prevItem={prev ?? null}
+                            prevMetrics={prev ? metricsMap[prev.id] ?? null : null}
+                            iterHistory={iterHistoryMap[item.id] ?? null}
+                          />
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
               {!reconstructions.length ? (
                 <tr>
-                  <td colSpan={7} className="empty-cell">No reconstructions yet.</td>
+                  <td colSpan={7} className="empty-cell">No reconstructions yet. Start a workflow above.</td>
                 </tr>
               ) : null}
             </tbody>

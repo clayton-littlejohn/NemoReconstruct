@@ -70,3 +70,51 @@ export type PipelineInfo = {
   requirements: string[];
   tunable_params: Record<string, string>;
 };
+
+export type MetricsEntry = {
+  epoch: number;
+  metric: string;
+  value: number;
+};
+
+export type MetricsResponse = {
+  id: string;
+  entries: MetricsEntry[];
+  summary: Record<string, number>;
+};
+
+export type WorkflowDetail = {
+  id: string;
+  scene_name: string;
+  video_filename: string;
+  status: string;
+  current_agent: string | null;
+  current_step: string | null;
+  iteration: number;
+  max_iterations: number;
+  last_verdict: string | null;
+  last_reason: string | null;
+  reconstruction_id: string | null;
+  error_message: string | null;
+  pid: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type IterationSummary = {
+  iteration: number;
+  params: ReconstructionParams;
+  loss: number | null;
+  ssim: number | null;
+  num_gaussians: number | null;
+  verdict: string | null;
+  reason: string | null;
+  ply_url: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export type IterationHistoryResponse = {
+  reconstruction_id: string;
+  iterations: IterationSummary[];
+};

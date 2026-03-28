@@ -75,6 +75,18 @@ class ReconstructionArtifacts(BaseModel):
     metadata_url: str | None = None
 
 
+class MetricsEntry(BaseModel):
+    epoch: int
+    metric: str
+    value: float
+
+
+class MetricsResponse(BaseModel):
+    id: str
+    summary: dict[str, float] = Field(default_factory=dict)
+    entries: list[MetricsEntry] = Field(default_factory=list)
+
+
 class UploadResponse(ReconstructionDetail):
     pass
 
@@ -95,3 +107,54 @@ class UploadFormData(BaseModel):
 
 class RetryRequest(BaseModel):
     params: ReconstructionParams | None = None
+
+
+class NotesUpdate(BaseModel):
+    notes: str = Field(min_length=1, max_length=5000)
+
+
+class IterationSummary(BaseModel):
+    iteration: int
+    params: ReconstructionParams = Field(default_factory=ReconstructionParams)
+    loss: float | None = None
+    ssim: float | None = None
+    num_gaussians: int | None = None
+    verdict: str | None = None
+    reason: str | None = None
+    ply_url: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class IterationHistoryResponse(BaseModel):
+    reconstruction_id: str
+    iterations: list[IterationSummary] = Field(default_factory=list)
+
+
+class WorkflowDetail(BaseModel):
+    id: str
+    scene_name: str
+    video_filename: str
+    status: str
+    current_agent: str | None = None
+    current_step: str | None = None
+    iteration: int = 0
+    max_iterations: int = 3
+    last_verdict: str | None = None
+    last_reason: str | None = None
+    reconstruction_id: str | None = None
+    error_message: str | None = None
+    pid: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkflowStateUpdate(BaseModel):
+    status: str | None = None
+    current_agent: str | None = None
+    current_step: str | None = None
+    iteration: int | None = None
+    last_verdict: str | None = None
+    last_reason: str | None = None
+    reconstruction_id: str | None = None
+    error_message: str | None = None

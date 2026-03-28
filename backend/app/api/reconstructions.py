@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models import Reconstruction, ReconstructionStatus
-from app.schemas import DeleteResponse, PipelineInfo, ReconstructionArtifacts, ReconstructionDetail, ReconstructionParams, ReconstructionStatusResponse, RetryRequest, RetryResponse, UploadResponse
+from app.models import IterationRecord, Reconstruction, ReconstructionStatus
+from app.schemas import DeleteResponse, IterationHistoryResponse, IterationSummary, MetricsResponse, MetricsEntry, NotesUpdate, PipelineInfo, ReconstructionArtifacts, ReconstructionDetail, ReconstructionParams, ReconstructionStatusResponse, RetryRequest, RetryResponse, UploadResponse
 from app.services.pipeline import PIPELINE_INFO
 from app.services.storage import ensure_parent, remove_workspace
 from app.workers.runner import runner
@@ -230,6 +230,35 @@ def download_artifact(reconstruction_id: str, artifact: str, db: Session = Depen
     return FileResponse(path, media_type=media_type, filename=path.name)
 
 
+@router.get("/reconstructions/{reconstruction_id}/metrics", response_model=MetricsResponse)
+def get_reconstruction_metrics(reconstruction_id: str, db: Session = Depends(get_db)) -> MetricsResponse:
+    reconstruction = get_reconstruction_or_404(db, reconstruction_id)
+    workspace = Path(reconstruction.workspace_dir)
+    # Use only the latest run's CSV (highest-dated folder)
+    csv_files = sorted(workspace.rglob("metrics_log.csv"))
+    if not csv_files:
+        return MetricsResponse(id=reconstruction.id)
+    latest_csv = csv_files[-1]
+    entries: list[MetricsEntry] = []
+    for line in latest_csv.read_text(encoding="utf-8").splitlines():
+        parts = line.strip().split(",", 2)
+        if len(parts) != 3:
+            continue
+        try:
+            entries.append(MetricsEntry(epoch=int(parts[0]), metric=parts[1], value=float(parts[2])))
+        except (ValueError, TypeError):
+            continue
+    summary: dict[str, float] = {}
+    if entries:
+        last_epoch = max(e.epoch for e in entries)
+        for e in entries:
+            if e.epoch == last_epoch:
+                summary[e.metric] = e.value
+    # Return only the last few entries to keep the response small for LLM agents
+    last_entries = [e for e in entries if e.epoch >= last_epoch - 10] if entries else []
+    return MetricsResponse(id=reconstruction.id, summary=summary, entries=last_entries)
+
+
 @router.post("/reconstructions/{reconstruction_id}/retry", response_model=RetryResponse)
 def retry_reconstruction(
     reconstruction_id: str,
@@ -262,11 +291,105 @@ def retry_reconstruction(
     return RetryResponse(**serialize_reconstruction(reconstruction).model_dump())
 
 
+@router.patch("/reconstructions/{reconstruction_id}/notes", response_model=ReconstructionDetail)
+def update_notes(
+    reconstruction_id: str,
+    body: NotesUpdate,
+    db: Session = Depends(get_db),
+) -> ReconstructionDetail:
+    reconstruction = get_reconstruction_or_404(db, reconstruction_id)
+    existing = reconstruction.description or ""
+    if existing:
+        reconstruction.description = existing + "\n" + body.notes
+    else:
+        reconstruction.description = body.notes
+    db.add(reconstruction)
+    db.commit()
+    db.refresh(reconstruction)
+    return serialize_reconstruction(reconstruction)
+
+
 @router.delete("/reconstructions/{reconstruction_id}", response_model=DeleteResponse)
 def delete_reconstruction(reconstruction_id: str, db: Session = Depends(get_db)) -> DeleteResponse:
     reconstruction = get_reconstruction_or_404(db, reconstruction_id)
     workspace = Path(reconstruction.workspace_dir)
+    db.query(IterationRecord).filter(IterationRecord.reconstruction_id == reconstruction_id).delete()
     db.delete(reconstruction)
     db.commit()
     remove_workspace(workspace)
     return DeleteResponse(id=reconstruction_id)
+
+
+def _build_iteration_ply_url(reconstruction_id: str, iteration: int) -> str:
+    return f"{settings.api_prefix}/reconstructions/{reconstruction_id}/iterations/{iteration}/download/splat_ply"
+
+
+@router.get("/reconstructions/{reconstruction_id}/iterations", response_model=IterationHistoryResponse)
+def get_iteration_history(reconstruction_id: str, db: Session = Depends(get_db)) -> IterationHistoryResponse:
+    get_reconstruction_or_404(db, reconstruction_id)
+    records = (
+        db.query(IterationRecord)
+        .filter(IterationRecord.reconstruction_id == reconstruction_id)
+        .order_by(IterationRecord.iteration)
+        .all()
+    )
+    iterations = []
+    for rec in records:
+        params = ReconstructionParams()
+        if rec.params_json:
+            try:
+                params = ReconstructionParams(**json.loads(rec.params_json))
+            except Exception:
+                pass
+        iterations.append(IterationSummary(
+            iteration=rec.iteration,
+            params=params,
+            loss=rec.loss,
+            ssim=rec.ssim,
+            num_gaussians=rec.num_gaussians,
+            verdict=rec.verdict,
+            reason=rec.reason,
+            ply_url=_build_iteration_ply_url(reconstruction_id, rec.iteration) if rec.ply_path else None,
+            started_at=rec.started_at,
+            completed_at=rec.completed_at,
+        ))
+    return IterationHistoryResponse(reconstruction_id=reconstruction_id, iterations=iterations)
+
+
+@router.get("/reconstructions/{reconstruction_id}/iterations/{iteration}/download/splat_ply")
+def download_iteration_ply(reconstruction_id: str, iteration: int, db: Session = Depends(get_db)) -> FileResponse:
+    get_reconstruction_or_404(db, reconstruction_id)
+    record = (
+        db.query(IterationRecord)
+        .filter(IterationRecord.reconstruction_id == reconstruction_id, IterationRecord.iteration == iteration)
+        .first()
+    )
+    if record is None or not record.ply_path:
+        raise HTTPException(status_code=404, detail="Iteration PLY not available")
+    path = Path(record.ply_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Iteration PLY file missing on disk")
+    return FileResponse(path, filename=f"iter_{iteration}_fvdb_output.ply")
+
+
+@router.patch("/reconstructions/{reconstruction_id}/iterations/{iteration}/verdict")
+def update_iteration_verdict(
+    reconstruction_id: str,
+    iteration: int,
+    body: dict = Body(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    record = (
+        db.query(IterationRecord)
+        .filter(IterationRecord.reconstruction_id == reconstruction_id, IterationRecord.iteration == iteration)
+        .first()
+    )
+    if record is None:
+        raise HTTPException(status_code=404, detail="Iteration record not found")
+    if "verdict" in body:
+        record.verdict = body["verdict"]
+    if "reason" in body:
+        record.reason = body["reason"]
+    db.add(record)
+    db.commit()
+    return {"iteration": record.iteration, "verdict": record.verdict, "reason": record.reason}

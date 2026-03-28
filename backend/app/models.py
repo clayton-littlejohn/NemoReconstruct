@@ -4,7 +4,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -56,3 +56,43 @@ class Reconstruction(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Workflow(Base):
+    __tablename__ = "workflows"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    scene_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    video_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    video_path: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(64), default="pending", nullable=False)
+    current_agent: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_step: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    iteration: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_iterations: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    last_verdict: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reconstruction_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class IterationRecord(Base):
+    __tablename__ = "iteration_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    reconstruction_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    iteration: Mapped[int] = mapped_column(Integer, nullable=False)
+    params_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metrics_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ply_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verdict: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    loss: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ssim: Mapped[float | None] = mapped_column(Float, nullable=True)
+    num_gaussians: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

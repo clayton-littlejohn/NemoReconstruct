@@ -702,7 +702,67 @@ Both sandboxes need the host service endpoint in their respective policies. One 
 | `nemoclaw/sandbox-openclaw-template.json` | Generic OpenClaw config — copy and customize for your own project (Part 2) |
 | `nemoclaw/nemoclaw_config.yaml` | Agent tools, model, and guardrails |
 | `nemoclaw/system_prompt.md` | Agent persona and workflow rules |
+| `nemoclaw/runner_prompt.md` | Runner agent prompt — executes pipelines |
+| `nemoclaw/evaluator_prompt.md` | Evaluator agent prompt — analyzes metrics, suggests parameter changes |
+| `nemoclaw/orchestrate.sh` | Multi-agent orchestrator — drives the Runner→Evaluator loop |
 | `nemoclaw/example_session.py` | Python SDK script to test the pipeline without an agent |
+
+---
+
+## Multi-Agent Iterative Workflow
+
+This demonstrates two sandboxed agents collaborating through the shared backend API to iteratively improve a 3D reconstruction.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Host                                                                │
+│                                                                      │
+│  orchestrate.sh (loop)                                               │
+│    │                                                                 │
+│    ├──► Sandbox: Runner agent                                        │
+│    │      Uploads video, starts pipeline, polls to completion        │
+│    │                                                                 │
+│    ├──► Sandbox: Evaluator agent                                     │
+│    │      Reads metrics, analyzes quality, suggests new params       │
+│    │      Verdict: ACCEPT or ITERATE {new params}                    │
+│    │                                                                 │
+│    ├──► Sandbox: Runner agent (retry with evaluator's params)        │
+│    │      ...                                                        │
+│    └──► (repeat until ACCEPT or max iterations)                      │
+│                                                                      │
+│  Backend API (0.0.0.0:8010) ◄── shared coordination layer           │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Key points:**
+- Each agent runs in its **own isolated sandbox** — separate filesystem, network, process tree
+- Agents **never talk to each other directly** — the backend API is the shared state
+- The host-side orchestrator script drives the loop: Runner → Evaluator → Runner (retry) → ...
+- The Evaluator reads training metrics (loss, SSIM, num_gaussians) and reasons about parameter changes
+- After a configurable number of iterations, the workflow stops with the best result
+
+### Run the workflow
+
+```bash
+cd ~/NemoReconstruct
+
+# Start the backend (if not already running)
+make backend-dev
+
+# Run the multi-agent workflow
+./nemoclaw/orchestrate.sh ~/videos/my_scene.MOV "kitchen-scan" 3
+#                         ─── video path ───   ── name ──   ── max iterations ──
+```
+
+### What happens
+
+1. **Iteration 1:** Runner agent uploads the video and starts a reconstruction with default parameters. Polls until complete.
+2. **Evaluation 1:** Evaluator agent fetches the reconstruction details and training metrics (`/api/v1/reconstructions/{id}/metrics`). Analyzes loss convergence, SSIM, gaussian count. Outputs a verdict:
+   - `ACCEPT` — quality is good enough, stop
+   - `ITERATE` — suggests specific parameter changes (e.g., more epochs, higher frame rate)
+3. **Iteration 2:** Runner agent retries the reconstruction with the evaluator's suggested parameters. Polls until complete.
+4. **Evaluation 2:** Evaluator analyzes the new results. Accepts or suggests further changes.
+5. Repeat up to `max_iterations` times.
 
 ---
 

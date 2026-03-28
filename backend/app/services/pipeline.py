@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import Reconstruction, ReconstructionStatus
+from app.models import IterationRecord, Reconstruction, ReconstructionStatus
 
 
 PIPELINE_INFO = {
@@ -238,6 +238,61 @@ def package_bundle(reconstruction: Reconstruction, paths: JobPaths) -> None:
             archive.write(reconstruction.artifact_usdz_path, arcname="fvdb_output.usdz")
 
 
+def save_iteration_snapshot(db: Session, reconstruction: Reconstruction, paths: JobPaths) -> None:
+    """Copy PLY to iterations/<N>/ and record an IterationRecord in the DB."""
+    # Determine iteration number from existing records
+    existing = (
+        db.query(IterationRecord)
+        .filter(IterationRecord.reconstruction_id == reconstruction.id)
+        .count()
+    )
+    iteration = existing + 1
+
+    # Copy PLY to a preserved location
+    ply_dest: str | None = None
+    if reconstruction.artifact_ply_path and Path(reconstruction.artifact_ply_path).exists():
+        iter_dir = paths.root / "iterations" / f"iter_{iteration}"
+        iter_dir.mkdir(parents=True, exist_ok=True)
+        dest = iter_dir / "fvdb_output.ply"
+        shutil.copy2(reconstruction.artifact_ply_path, dest)
+        ply_dest = str(dest)
+
+    # Read latest metrics summary
+    csv_files = sorted(paths.root.rglob("metrics_log.csv"))
+    metrics_summary: dict[str, float] = {}
+    if csv_files:
+        latest_csv = csv_files[-1]
+        entries: list[tuple[int, str, float]] = []
+        for line in latest_csv.read_text(encoding="utf-8").splitlines():
+            parts = line.strip().split(",", 2)
+            if len(parts) != 3:
+                continue
+            try:
+                entries.append((int(parts[0]), parts[1], float(parts[2])))
+            except (ValueError, TypeError):
+                continue
+        if entries:
+            last_epoch = max(e[0] for e in entries)
+            for epoch, metric, value in entries:
+                if epoch == last_epoch:
+                    metrics_summary[metric] = value
+
+    record = IterationRecord(
+        reconstruction_id=reconstruction.id,
+        iteration=iteration,
+        params_json=reconstruction.processing_params_json,
+        metrics_json=json.dumps(metrics_summary) if metrics_summary else None,
+        ply_path=ply_dest,
+        loss=metrics_summary.get("reconstruct/loss"),
+        ssim=metrics_summary.get("reconstruct/ssimloss"),
+        num_gaussians=int(metrics_summary["reconstruct/num_gaussians"]) if "reconstruct/num_gaussians" in metrics_summary else None,
+        started_at=reconstruction.started_at,
+        completed_at=reconstruction.completed_at,
+    )
+    db.add(record)
+    db.commit()
+
+
 def process_reconstruction_job(db: Session, reconstruction_id: str) -> None:
     reconstruction = db.get(Reconstruction, reconstruction_id)
     if reconstruction is None:
@@ -396,6 +451,9 @@ def process_reconstruction_job(db: Session, reconstruction_id: str) -> None:
         update_reconstruction(db, reconstruction, status=ReconstructionStatus.completed, step="done", pct=100, error_message=None)
         db.add(reconstruction)
         db.commit()
+
+        # Preserve iteration snapshot (copy PLY + record metrics/params)
+        save_iteration_snapshot(db, reconstruction, paths)
     except Exception as exc:
         update_reconstruction(
             db,

@@ -39,3 +39,27 @@ def ensure_runtime_schema() -> None:
         columns = {row["name"] for row in rows}
         if "processing_params_json" not in columns:
             conn.execute(text("ALTER TABLE reconstructions ADD COLUMN processing_params_json TEXT"))
+
+        # Create iteration_records table if it doesn't exist
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS iteration_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reconstruction_id VARCHAR(36) NOT NULL,
+                iteration INTEGER NOT NULL,
+                params_json TEXT,
+                metrics_json TEXT,
+                ply_path TEXT,
+                verdict VARCHAR(64),
+                reason TEXT,
+                loss FLOAT,
+                ssim FLOAT,
+                num_gaussians INTEGER,
+                started_at DATETIME,
+                completed_at DATETIME,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_iteration_records_reconstruction_id
+            ON iteration_records (reconstruction_id)
+        """))
