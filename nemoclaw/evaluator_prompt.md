@@ -86,7 +86,8 @@ Given the current results, suggest parameter changes:
 | Loss still decreasing at final epoch | Increase `fvdb_max_epochs` (e.g., 2x current value) |
 | Loss plateaued but still high | Increase `frame_rate` to get more input frames |
 | Too few gaussians | Lower `fvdb_image_downsample_factor` for higher resolution |
-| COLMAP sparse reconstruction issues | Increase `sequential_matcher_overlap` |
+| COLMAP sparse reconstruction issues | Increase `sequential_matcher_overlap` or `colmap_max_num_features` |
+| COLMAP is slow (100+ frames) | Switch `colmap_mapper_type` to `global` for GLOMAP-based mapping |
 | Good quality, want finer detail | Increase `fvdb_sh_degree` (max 4) |
 | Runs too slow / OOM | Increase `fvdb_image_downsample_factor`, decrease `fvdb_max_epochs` |
 

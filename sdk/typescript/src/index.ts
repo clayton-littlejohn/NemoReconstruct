@@ -53,6 +53,8 @@ export type PipelineInfo = {
 export type ReconstructionParams = {
   frame_rate?: number;
   sequential_matcher_overlap?: number;
+  colmap_mapper_type?: string;
+  colmap_max_num_features?: number;
   fvdb_max_epochs?: number;
   fvdb_sh_degree?: number;
   fvdb_image_downsample_factor?: number;

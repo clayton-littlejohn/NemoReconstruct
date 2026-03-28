@@ -50,6 +50,8 @@ You can tune each reconstruction run:
 |-----------|-------|---------|-------------|
 | `frame_rate` | 0.25 – 12.0 | 2.0 | Frames per second extracted by ffmpeg |
 | `sequential_matcher_overlap` | 2 – 50 | 12 | COLMAP sequential matcher overlap window |
+| `colmap_mapper_type` | incremental / global | incremental | COLMAP mapper algorithm. 'global' uses GLOMAP — faster on large scenes (100+ frames) but less robust on tricky geometry |
+| `colmap_max_num_features` | 1000 – 32768 | 8192 | Max SIFT features extracted per image. More = better matching but slower feature extraction |
 | `fvdb_max_epochs` | 5 – 500 | 40 | fVDB training epochs |
 | `fvdb_sh_degree` | 0 – 4 | 3 | Spherical harmonics degree for splats |
 | `fvdb_image_downsample_factor` | 1 – 12 | 6 | Input image downsampling for fVDB |
@@ -59,6 +61,8 @@ You can tune each reconstruction run:
 - **Faster runs**: lower `frame_rate` (1.0), higher `fvdb_image_downsample_factor` (8-10), lower `fvdb_max_epochs` (15-20)
 - **Higher quality**: higher `frame_rate` (4.0+), lower `fvdb_image_downsample_factor` (2-4), higher `fvdb_max_epochs` (100+)
 - **Failed COLMAP**: try increasing `sequential_matcher_overlap` (20+) or lowering `frame_rate`
+- **Slow COLMAP on 100+ frames**: switch `colmap_mapper_type` to `global` for faster sparse reconstruction
+- **Poor feature matching**: increase `colmap_max_num_features` (12000-16000) for more feature points per image
 
 ## Rules
 

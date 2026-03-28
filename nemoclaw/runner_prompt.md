@@ -28,7 +28,8 @@ POST /api/v1/reconstructions/upload
 Content-Type: multipart/form-data
 
 Fields: file (video), name (string), and optional parameters:
-  frame_rate, sequential_matcher_overlap, fvdb_max_epochs,
+  frame_rate, sequential_matcher_overlap, colmap_mapper_type,
+  colmap_max_num_features, fvdb_max_epochs,
   fvdb_sh_degree, fvdb_image_downsample_factor, splat_only_mode
 ```
 

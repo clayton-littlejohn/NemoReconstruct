@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     frame_rate: float = 2.0
     max_upload_size_mb: int = 4096
     sequential_matcher_overlap: int = 12
+    colmap_mapper_type: str = "incremental"
+    colmap_max_num_features: int = 8192
     fvdb_max_epochs: int = 40
     fvdb_sh_degree: int = 3
     fvdb_image_downsample_factor: int = 6

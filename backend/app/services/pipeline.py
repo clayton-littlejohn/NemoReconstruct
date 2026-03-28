@@ -32,6 +32,8 @@ PIPELINE_INFO = {
     "tunable_params": {
         "frame_rate": "Frames per second extracted by ffmpeg (0.25-12.0)",
         "sequential_matcher_overlap": "COLMAP sequential matcher overlap window (2-50)",
+        "colmap_mapper_type": "COLMAP mapper algorithm: 'incremental' (default, robust) or 'global' (faster on large scenes, uses GLOMAP)",
+        "colmap_max_num_features": "Max SIFT features per image (1000-32768, default 8192). More features = better matching but slower",
         "fvdb_max_epochs": "fVDB training epochs (5-500)",
         "fvdb_sh_degree": "Spherical harmonics degree for splats (0-4)",
         "fvdb_image_downsample_factor": "Input image downsampling for fVDB (1-12)",
@@ -303,6 +305,8 @@ def process_reconstruction_job(db: Session, reconstruction_id: str) -> None:
 
     frame_rate = float(processing_params.get("frame_rate", settings.frame_rate))
     sequential_matcher_overlap = int(processing_params.get("sequential_matcher_overlap", settings.sequential_matcher_overlap))
+    colmap_mapper_type = str(processing_params.get("colmap_mapper_type", settings.colmap_mapper_type))
+    colmap_max_num_features = int(processing_params.get("colmap_max_num_features", settings.colmap_max_num_features))
     fvdb_max_epochs = int(processing_params.get("fvdb_max_epochs", settings.fvdb_max_epochs))
     fvdb_sh_degree = int(processing_params.get("fvdb_sh_degree", settings.fvdb_sh_degree))
     fvdb_image_downsample_factor = int(
@@ -352,6 +356,8 @@ def process_reconstruction_job(db: Session, reconstruction_id: str) -> None:
                 str(paths.images_dir),
                 "--ImageReader.single_camera",
                 "1",
+                "--SiftExtraction.max_num_features",
+                str(colmap_max_num_features),
             ],
             paths.log_path,
         )
@@ -369,11 +375,12 @@ def process_reconstruction_job(db: Session, reconstruction_id: str) -> None:
             paths.log_path,
         )
 
-        update_reconstruction(db, reconstruction, status=ReconstructionStatus.sparse_reconstruction, step="colmap_mapper", pct=55)
+        mapper_cmd = "global_mapper" if colmap_mapper_type == "global" else "mapper"
+        update_reconstruction(db, reconstruction, status=ReconstructionStatus.sparse_reconstruction, step=f"colmap_{mapper_cmd}", pct=55)
         run_command(
             [
                 colmap_bin,
-                "mapper",
+                mapper_cmd,
                 "--database_path",
                 str(paths.colmap_database),
                 "--image_path",

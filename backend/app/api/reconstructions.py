@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
+from pydantic import ValidationError
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -52,19 +53,26 @@ def serialize_processing_params(reconstruction: Reconstruction) -> Reconstructio
 def build_processing_params(
     frame_rate: float | None,
     sequential_matcher_overlap: int | None,
+    colmap_mapper_type: str | None,
+    colmap_max_num_features: int | None,
     fvdb_max_epochs: int | None,
     fvdb_sh_degree: int | None,
     fvdb_image_downsample_factor: int | None,
     splat_only_mode: bool | None,
 ) -> ReconstructionParams:
-    return ReconstructionParams(
-        frame_rate=frame_rate,
-        sequential_matcher_overlap=sequential_matcher_overlap,
-        fvdb_max_epochs=fvdb_max_epochs,
-        fvdb_sh_degree=fvdb_sh_degree,
-        fvdb_image_downsample_factor=fvdb_image_downsample_factor,
-        splat_only_mode=splat_only_mode,
-    )
+    try:
+        return ReconstructionParams(
+            frame_rate=frame_rate,
+            sequential_matcher_overlap=sequential_matcher_overlap,
+            colmap_mapper_type=colmap_mapper_type,
+            colmap_max_num_features=colmap_max_num_features,
+            fvdb_max_epochs=fvdb_max_epochs,
+            fvdb_sh_degree=fvdb_sh_degree,
+            fvdb_image_downsample_factor=fvdb_image_downsample_factor,
+            splat_only_mode=splat_only_mode,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors())
 
 
 def serialize_reconstruction(reconstruction: Reconstruction) -> ReconstructionDetail:
@@ -111,6 +119,8 @@ def upload_reconstruction(
     description: str | None = Form(None),
     frame_rate: float | None = Form(None),
     sequential_matcher_overlap: int | None = Form(None),
+    colmap_mapper_type: str | None = Form(None),
+    colmap_max_num_features: int | None = Form(None),
     fvdb_max_epochs: int | None = Form(None),
     fvdb_sh_degree: int | None = Form(None),
     fvdb_image_downsample_factor: int | None = Form(None),
@@ -124,6 +134,8 @@ def upload_reconstruction(
     processing_params = build_processing_params(
         frame_rate,
         sequential_matcher_overlap,
+        colmap_mapper_type,
+        colmap_max_num_features,
         fvdb_max_epochs,
         fvdb_sh_degree,
         fvdb_image_downsample_factor,

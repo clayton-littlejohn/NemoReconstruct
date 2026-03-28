@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 class ReconstructionParams(BaseModel):
     frame_rate: float | None = Field(default=None, ge=0.25, le=12.0)
     sequential_matcher_overlap: int | None = Field(default=None, ge=2, le=50)
+    colmap_mapper_type: str | None = Field(default=None, pattern="^(incremental|global)$")
+    colmap_max_num_features: int | None = Field(default=None, ge=1000, le=32768)
     fvdb_max_epochs: int | None = Field(default=None, ge=5, le=500)
     fvdb_sh_degree: int | None = Field(default=None, ge=0, le=4)
     fvdb_image_downsample_factor: int | None = Field(default=None, ge=1, le=12)
