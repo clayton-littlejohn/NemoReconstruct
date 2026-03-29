@@ -1,5 +1,26 @@
+# OpenShell Sandbox Policy — NemoClaw Agents
+#
+# Shared by both agents in the orchestrate.sh loop:
+#
+#   Agent A (Runner)    — uploads video, starts reconstruction, polls status
+#   Agent B (Evaluator) — reads metrics, analyzes quality, suggests improvements
+#
+# Both agents run in isolated sandboxes with identical permissions.
+# Each sandbox is ephemeral — created for one task, then destroyed.
+#
+# What they CAN access:
+#   - NemoReconstruct backend API (port 8010) — via curl
+#   - OpenClaw gateway (port 18789) — agent harness + LLM inference
+#   - /sandbox (read-write) and /tmp (scratch space)
+#
+# What they CANNOT access:
+#   - Host filesystem (no access to /home, etc.)
+#   - Other network services (no internet, no SSH, no arbitrary ports)
+#   - Each other (each agent is a fresh sandbox)
+
 version: 1
 
+# ── Filesystem ──────────────────────────────────────────
 filesystem_policy:
   include_workdir: true
   read_only:
@@ -11,33 +32,25 @@ filesystem_policy:
     - /etc
     - /var/log
   read_write:
-    - /sandbox
-    - /tmp
+    - /sandbox          # Agent workspace (uploaded files land here)
+    - /tmp              # Scratch space
     - /dev/null
 
 landlock:
   compatibility: best_effort
 
+# ── Process isolation ───────────────────────────────────
 process:
   run_as_user: sandbox
   run_as_group: sandbox
 
+# ── Network policies ───────────────────────────────────
+# Only two endpoints are allowed. Everything else is blocked.
 network_policies:
-  # Ollama inference on the host (via cluster gateway)
-  ollama:
-    name: ollama
-    endpoints:
-      - host: 172.20.0.1
-        port: 11434
-        protocol: tcp
-        enforcement: enforce
-        access: full
-    binaries:
-      - path: /usr/bin/curl
-      - path: /usr/bin/node
-      - path: /bin/bash
 
-  # NemoReconstruct backend on the host
+  # 1. NemoReconstruct backend API
+  #    Used by: Agent A (upload, poll, retry) and Agent B (read metrics)
+  #    Host address: 172.20.0.1 is the Docker gateway (host) IP
   nemo_reconstruct:
     name: nemo-reconstruct
     endpoints:
@@ -48,10 +61,12 @@ network_policies:
         access: full
     binaries:
       - path: /usr/bin/curl
-      - path: /usr/bin/node
       - path: /bin/bash
 
-  # OpenClaw gateway on the host (for agent harness communication)
+  # 2. OpenClaw gateway (required)
+  #    Handles agent harness communication AND proxies LLM inference
+  #    (inference.local → gateway → Ollama on host:11434)
+  #    Used by: Agent A and Agent B
   openclaw_gateway:
     name: openclaw-gateway
     endpoints:
@@ -63,40 +78,3 @@ network_policies:
     binaries:
       - path: /usr/bin/node
       - path: /bin/bash
-
-  # GitHub (read-only for git operations)
-  github:
-    name: github
-    endpoints:
-      - host: github.com
-        port: 443
-        protocol: rest
-        tls: terminate
-        enforcement: enforce
-        rules:
-          - allow:
-              method: GET
-              path: /**/info/refs*
-          - allow:
-              method: POST
-              path: /**/git-upload-pack
-    binaries:
-      - path: /usr/bin/git
-
-  github_rest_api:
-    name: github-rest-api
-    endpoints:
-      - host: api.github.com
-        port: 443
-        protocol: rest
-        tls: terminate
-        enforcement: enforce
-        rules:
-          - allow:
-              method: GET
-              path: /**
-          - allow:
-              method: HEAD
-              path: /**
-    binaries:
-      - path: /usr/bin/gh

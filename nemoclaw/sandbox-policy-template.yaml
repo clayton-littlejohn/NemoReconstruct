@@ -1,9 +1,14 @@
-# OpenShell Sandbox Network Policy — Template
+# OpenShell Sandbox Policy — Template
 #
-# Copy this file and customize for your project:
+# Copy and customize for your project:
 #   cp sandbox-policy-template.yaml sandbox-policy.yaml
 #
-# Find your host IP:
+# This defines what each sandboxed agent can access.
+# Both Agent A and Agent B share the same policy (they need
+# the same permissions). Each agent runs in its own ephemeral
+# sandbox — isolated from the host and from each other.
+#
+# Find your host (gateway) IP:
 #   docker network inspect openshell-cluster-openshell | grep Gateway
 #   (Typically 172.20.0.1)
 #
@@ -12,6 +17,7 @@
 
 version: 1
 
+# ── Filesystem ──────────────────────────────────────────
 filesystem_policy:
   include_workdir: true
   read_only:
@@ -23,36 +29,42 @@ filesystem_policy:
     - /etc
     - /var/log
   read_write:
-    - /sandbox
-    - /tmp
+    - /sandbox          # Agent workspace (uploaded files land here)
+    - /tmp              # Scratch space
     - /dev/null
 
 landlock:
   compatibility: best_effort
 
+# ── Process isolation ───────────────────────────────────
 process:
   run_as_user: sandbox
   run_as_group: sandbox
 
+# ── Network policies ───────────────────────────────────
+# Only allow the endpoints your agents actually need.
+# Everything else is blocked by default.
 network_policies:
-  # ── YOUR SERVICE ──────────────────────────────────────
-  # Change the port to match your service.
-  # Add more entries if your project has multiple services.
+
+  # 1. Your service API
+  #    Used by: Agent A (execute tasks) and Agent B (read results)
+  #    ← CHANGE the port to match your service
   my_service:
     name: my-service
     endpoints:
-      - host: 172.20.0.1        # Host IP (from docker network inspect)
+      - host: 172.20.0.1        # Docker gateway IP (host machine)
         port: 8010               # ← CHANGE THIS to your service port
         protocol: tcp
         enforcement: enforce
         access: full
     binaries:
       - path: /usr/bin/curl
-      - path: /usr/bin/node
       - path: /bin/bash
 
-  # ── OPENCLAW GATEWAY (required) ──────────────────────
-  # Do not remove — needed for agent communication.
+  # 2. OpenClaw gateway (required — do not remove)
+  #    Handles agent harness communication AND proxies LLM inference
+  #    (inference.local → gateway → Ollama on host:11434)
+  #    Used by: Agent A and Agent B
   openclaw_gateway:
     name: openclaw-gateway
     endpoints:
@@ -64,39 +76,3 @@ network_policies:
     binaries:
       - path: /usr/bin/node
       - path: /bin/bash
-
-  # ── GITHUB (optional) ────────────────────────────────
-  # Remove if git access is not needed.
-  github:
-    name: github
-    endpoints:
-      - host: github.com
-        port: 443
-        protocol: rest
-        tls: terminate
-        enforcement: enforce
-        rules:
-          - allow:
-              method: GET
-              path: /**/info/refs*
-          - allow:
-              method: POST
-              path: /**/git-upload-pack
-    binaries:
-      - path: /usr/bin/git
-
-  github_rest_api:
-    name: github-rest-api
-    endpoints:
-      - host: api.github.com
-        port: 443
-        protocol: rest
-        tls: terminate
-        enforcement: enforce
-        rules:
-          - allow:
-              method: GET
-              path: /**
-          - allow:
-              method: HEAD
-              path: /**

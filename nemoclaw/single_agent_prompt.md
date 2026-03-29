@@ -55,7 +55,7 @@ You can tune each reconstruction run:
 | `sequential_matcher_overlap` | 2 – 50 | 12 | COLMAP sequential matcher overlap window |
 | `colmap_mapper_type` | incremental / global | incremental | COLMAP mapper algorithm. 'global' uses GLOMAP — faster on large scenes (100+ frames) but less robust on tricky geometry |
 | `colmap_max_num_features` | 1000 – 32768 | 8192 | Max SIFT features extracted per image. More = better matching but slower feature extraction |
-| `reconstruction_backend` | fvdb / 3dgrut | 3dgrut | Reconstruction backend. '3dgrut' uses NVIDIA 3D Gaussian Ray Tracing Unified Toolkit (default). 'fvdb' uses fVDB Reality Capture (frgs) |
+| `reconstruction_backend` | fvdb / 3dgrut | fvdb | Reconstruction backend. 'fvdb' uses fVDB Reality Capture (frgs, default). '3dgrut' uses NVIDIA 3D Gaussian Ray Tracing Unified Toolkit |
 | `fvdb_max_epochs` | 5 – 500 | 40 | fVDB training epochs (only used when backend=fvdb) |
 | `fvdb_sh_degree` | 0 – 4 | 3 | Spherical harmonics degree for splats (only used when backend=fvdb) |
 | `fvdb_image_downsample_factor` | 1 – 12 | 6 | Input image downsampling for fVDB (only used when backend=fvdb) |

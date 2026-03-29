@@ -81,7 +81,7 @@ The collision mesh generation writes metrics to `collision_mesh/collision_metric
 
 ## How to Evaluate
 
-### Signs of a good reconstruction (3DGRUT — default backend):
+### Signs of a good reconstruction (3DGRUT backend):
 - Final `reconstruct/psnr` above 25 dB (higher is better)
 - Final `reconstruct/ssim` above 0.85 (higher is better)
 - Metrics still improving at final iteration → more iterations may help

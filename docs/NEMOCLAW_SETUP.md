@@ -91,7 +91,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Install Ollama
 curl -fsSL https://ollama.com/install.sh | sh
 
-# Verify it's running
+# Verify it's running (0.17.0+ required for OpenShell)
 ollama --version
 systemctl status ollama
 
@@ -340,7 +340,6 @@ network_policies:
         access: full
     binaries:
       - path: /usr/bin/curl
-      - path: /usr/bin/node
       - path: /bin/bash
 
   # OpenClaw gateway on the host (required for agent communication)
@@ -355,47 +354,11 @@ network_policies:
     binaries:
       - path: /usr/bin/node
       - path: /bin/bash
-
-  # (Optional) GitHub read-only access for git operations
-  github:
-    name: github
-    endpoints:
-      - host: github.com
-        port: 443
-        protocol: rest
-        tls: terminate
-        enforcement: enforce
-        rules:
-          - allow:
-              method: GET
-              path: /**/info/refs*
-          - allow:
-              method: POST
-              path: /**/git-upload-pack
-    binaries:
-      - path: /usr/bin/git
-
-  github_rest_api:
-    name: github-rest-api
-    endpoints:
-      - host: api.github.com
-        port: 443
-        protocol: rest
-        tls: terminate
-        enforcement: enforce
-        rules:
-          - allow:
-              method: GET
-              path: /**
-          - allow:
-              method: HEAD
-              path: /**
 ```
 
 **Customize this:**
 - Change `port: 8010` to your service's port
 - Add more `network_policies` entries if your service depends on other hosts
-- Remove the GitHub entries if git access isn't needed
 
 > **Note:** `inference.local` is handled internally by the sandbox runtime — no policy entry needed for LLM access.
 
@@ -420,7 +383,7 @@ Create a file called `sandbox-openclaw.json` in your project:
             "reasoning": false,
             "input": ["text"],
             "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-            "contextWindow": 128000,
+            "contextWindow": 32768,
             "maxTokens": 8192
           }
         ]
@@ -436,7 +399,8 @@ Create a file called `sandbox-openclaw.json` in your project:
     }
   },
   "tools": {
-    "profile": "coding"
+    "profile": "coding",
+    "deny": ["web_fetch"]
   },
   "commands": {
     "native": "auto",
@@ -607,8 +571,8 @@ curl -s http://localhost:8010/api/v1/datasets
 
 # Start a reconstruction from a dataset scene
 curl -s -X POST http://localhost:8010/api/v1/reconstructions/from-dataset \
-  -H "Content-Type: application/json" \
-  -d '{"name": "garden-test", "dataset_scene": "garden"}'
+  -F "dataset_name=garden" \
+  -F "name=garden-test"
 ```
 
 > **Tip:** The zip file (~12 GB) is cached at `data/.360_v2.zip` after the first download. To free disk space after extracting, delete it: `rm data/.360_v2.zip`
@@ -692,19 +656,19 @@ openclaw agent --local --session-id demo \
 You can create as many sandboxes as you want, each with a different network policy. For example, one sandbox might only access the backend API, while another can also reach GitHub:
 
 ```bash
-# Sandbox A — backend access only
+# Sandbox A — using the NemoClaw policy
 openshell sandbox create \
   --from openclaw \
-  --name agent-backend \
-  --policy nemoclaw/sandbox-policy-backend-only.yaml \
+  --name agent-a \
+  --policy nemoclaw/sandbox-policy.yaml \
   --upload "$PWD:/sandbox/NemoReconstruct" \
   --tty
 
-# Sandbox B — backend + GitHub access
+# Sandbox B — using a custom policy with different access
 openshell sandbox create \
   --from openclaw \
-  --name agent-full \
-  --policy nemoclaw/sandbox-policy.yaml \
+  --name agent-b \
+  --policy my-custom-policy.yaml \
   --upload "$PWD:/sandbox/NemoReconstruct" \
   --tty
 ```
@@ -726,16 +690,15 @@ Both sandboxes need the host service endpoint in their respective policies. One 
 
 | File | Purpose |
 |------|---------|
-| `nemoclaw/sandbox-policy.yaml` | Network policy — allows backend (:8010), Ollama (:11434), OpenClaw gateway (:18789), GitHub |
+| `nemoclaw/sandbox-policy.yaml` | OpenShell sandbox policy — allows backend (:8010) and OpenClaw gateway (:18789) |
 | `nemoclaw/sandbox-openclaw.json` | OpenClaw config — model → `inference.local`, workspace → `/sandbox/NemoReconstruct` |
+| `nemoclaw/runner_prompt.md` | Agent A (Runner) system prompt — executes pipelines |
+| `nemoclaw/evaluator_prompt.md` | Agent B (Evaluator) system prompt — analyzes metrics, suggests parameter changes |
+| `nemoclaw/orchestrate.sh` | Multi-agent orchestrator — drives the Agent A → Agent B loop |
+| `nemoclaw/single_agent_prompt.md` | Standalone agent prompt — for ad-hoc single-agent use |
+| `nemoclaw/example_session.py` | Python SDK script to test the pipeline without an agent |
 | `nemoclaw/sandbox-policy-template.yaml` | Generic sandbox policy — copy and customize for your own project (Part 2) |
 | `nemoclaw/sandbox-openclaw-template.json` | Generic OpenClaw config — copy and customize for your own project (Part 2) |
-| `nemoclaw/nemoclaw_config.yaml` | Agent tools, model, and guardrails |
-| `nemoclaw/system_prompt.md` | Agent persona and workflow rules |
-| `nemoclaw/runner_prompt.md` | Runner agent prompt — executes pipelines |
-| `nemoclaw/evaluator_prompt.md` | Evaluator agent prompt — analyzes metrics, suggests parameter changes |
-| `nemoclaw/orchestrate.sh` | Multi-agent orchestrator — drives the Runner→Evaluator loop |
-| `nemoclaw/example_session.py` | Python SDK script to test the pipeline without an agent |
 
 ---
 
@@ -941,3 +904,20 @@ openshell inference get                             # Inference routing
 openshell provider get ollama                       # Provider config
 ollama list                                         # Available models
 ```
+
+---
+
+## References
+
+This tutorial builds on the following projects and research:
+
+- **[OpenShell Blueprint — Secure Long Running AI Agents with OpenShell on DGX Spark](https://build.nvidia.com/spark/openshell)** — The official NVIDIA playbook this tutorial follows for setting up OpenShell + OpenClaw + Ollama on DGX Spark.
+- **[OpenShell](https://github.com/NVIDIA/OpenShell)** — Kernel-level sandbox runtime using Landlock LSM for filesystem, network, and process isolation.
+- **[OpenClaw](https://docs.openclaw.ai/)** — Self-hosted AI agent gateway with tool use, sessions, and multi-channel routing.
+- **[3DGRUT](https://github.com/nv-tlabs/3dgrut)** — NVIDIA's 3D Gaussian Ray Tracing Unified Toolkit (both 3DGRT and 3DGUT backends).
+- **[fVDB](https://arxiv.org/abs/2407.01781)** — Deep-learning framework for sparse, large-scale spatial intelligence (Williams et al., SIGGRAPH 2024).
+- **[COLMAP](https://colmap.github.io/)** — Structure-from-Motion pipeline (Schönberger & Frahm, CVPR 2016).
+- **[Mip-NeRF 360](https://jonbarron.info/mipnerf360/)** — Benchmark dataset for unbounded 360° scenes (Barron et al., CVPR 2022).
+- **[3D Gaussian Splatting](https://arxiv.org/abs/2308.04079)** — Real-time radiance field rendering via 3D Gaussians (Kerbl et al., SIGGRAPH 2023).
+- **[Ollama](https://ollama.com)** — Local LLM inference server.
+- **[DGX Spark](https://docs.nvidia.com/dgx/dgx-spark/)** — NVIDIA compact AI computer (GB10 Grace Blackwell Superchip, 128 GB unified memory).

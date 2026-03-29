@@ -9,7 +9,7 @@ The pipeline uses **NemoClaw** as the agentic orchestrator, **3DGRUT** for neura
 ```
 Video → ffmpeg → COLMAP → 3DGRUT → NuRec USDZ + PLY
                     ↑ orchestrated by ↑
-              NemoClaw Agent (Nemotron)
+            NemoClaw Agent (glm-4.7-flash)
               inside OpenShell Sandbox
               powered by Ollama (local LLM)
 ```
@@ -121,41 +121,64 @@ data/             Downloaded dataset scenes (git-ignored)
 
 | File | Purpose |
 |------|---------|
-| `nemoclaw/sandbox-policy.yaml` | OpenShell sandbox network policy (NemoReconstruct) |
+| `nemoclaw/sandbox-policy.yaml` | OpenShell sandbox policy — network + filesystem rules for both agents |
+| `nemoclaw/sandbox-openclaw.json` | OpenClaw config — model, workspace, tool permissions |
+| `nemoclaw/runner_prompt.md` | Agent A (Runner) system prompt — executes pipelines |
+| `nemoclaw/evaluator_prompt.md` | Agent B (Evaluator) system prompt — analyzes metrics |
+| `nemoclaw/orchestrate.sh` | Multi-agent orchestrator — Agent A → Agent B loop |
+| `nemoclaw/single_agent_prompt.md` | Standalone agent prompt — for ad-hoc single-agent use |
+| `nemoclaw/example_session.py` | Python SDK script to test the pipeline without an agent |
 | `nemoclaw/sandbox-policy-template.yaml` | Generic sandbox policy — copy and customize for your project |
-| `nemoclaw/sandbox-openclaw.json` | OpenClaw config (NemoReconstruct → `inference.local`) |
 | `nemoclaw/sandbox-openclaw-template.json` | Generic OpenClaw config — copy and customize for your project |
-| `nemoclaw/nemoclaw_config.yaml` | Agent tools, model, guardrails |
-| `nemoclaw/system_prompt.md` | Agent persona and workflow rules |
-| `nemoclaw/runner_prompt.md` | Runner agent prompt — executes pipelines |
-| `nemoclaw/evaluator_prompt.md` | Evaluator agent prompt — analyzes metrics |
-| `nemoclaw/orchestrate.sh` | Multi-agent orchestrator — Runner→Evaluator loop |
-| `nemoclaw/example_session.py` | SDK script to test the pipeline without an agent |
 
 ---
 
 ## Backend API
 
+### Reconstruction Endpoints
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
 | GET | `/api/v1/pipelines` | List available pipelines |
+| GET | `/api/v1/datasets` | List available dataset scenes in `data/` |
 | POST | `/api/v1/reconstructions/upload` | Upload video + start reconstruction |
 | POST | `/api/v1/reconstructions/from-dataset` | Create reconstruction from a downloaded dataset scene |
-| GET | `/api/v1/datasets` | List available dataset scenes in `data/` |
 | GET | `/api/v1/reconstructions` | List all jobs |
 | GET | `/api/v1/reconstructions/{id}` | Job details |
 | GET | `/api/v1/reconstructions/{id}/status` | Poll status + progress |
 | GET | `/api/v1/reconstructions/{id}/artifacts` | List downloadable artifacts |
 | GET | `/api/v1/reconstructions/{id}/download/{artifact}` | Download artifact |
+| GET | `/api/v1/reconstructions/{id}/metrics` | Training metrics (loss, SSIM, etc.) |
+| GET | `/api/v1/reconstructions/{id}/iterations` | Iteration history with params/metrics/verdict |
+| GET | `/api/v1/reconstructions/{id}/iterations/{n}/download/splat_ply` | Download PLY from a specific iteration |
 | POST | `/api/v1/reconstructions/{id}/retry` | Retry with new params |
+| PATCH | `/api/v1/reconstructions/{id}/notes` | Append to job description |
+| PATCH | `/api/v1/reconstructions/{id}/iterations/{n}/verdict` | Update verdict on an iteration |
 | DELETE | `/api/v1/reconstructions/{id}` | Delete a job |
+
+### Workflow Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/workflows` | List all workflows |
+| GET | `/api/v1/workflows/{id}` | Workflow details |
+| POST | `/api/v1/workflows/start` | Start multi-agent workflow (video upload) |
+| POST | `/api/v1/workflows/start-from-dataset` | Start multi-agent workflow (dataset) |
+| PATCH | `/api/v1/workflows/{id}/state` | Update workflow state |
+| POST | `/api/v1/workflows/{id}/stop` | Stop a running workflow |
+| DELETE | `/api/v1/workflows/{id}` | Delete a workflow |
+
+### Docs
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
 | GET | `/docs` | Interactive API docs |
 | GET | `/openapi.json` | OpenAPI schema |
 
 ### Tunable Parameters
 
-Pass these to `POST /api/v1/reconstructions/upload`:
+Pass these to `POST /api/v1/reconstructions/upload` or `POST /api/v1/reconstructions/from-dataset`:
 
 | Parameter | Range | Default | Effect |
 |-----------|-------|---------|--------|
@@ -163,7 +186,7 @@ Pass these to `POST /api/v1/reconstructions/upload`:
 | `sequential_matcher_overlap` | 2 – 50 | 12 | COLMAP matcher overlap |
 | `colmap_mapper_type` | incremental / global | incremental | COLMAP mapper algorithm ('global' uses GLOMAP) |
 | `colmap_max_num_features` | 1000 – 32768 | 8192 | Max SIFT features per image |
-| `reconstruction_backend` | 3dgrut / fvdb | 3dgrut | Reconstruction backend |
+| `reconstruction_backend` | 3dgrut / fvdb | fvdb | Reconstruction backend |
 | `grut_n_iterations` | 1000 – 100000 | 30000 | 3DGRUT training iterations |
 | `grut_render_method` | 3dgrt / 3dgut | 3dgrt | 3DGRUT render method |
 | `grut_strategy` | gs / mcmc | gs | 3DGRUT densification strategy |
@@ -172,6 +195,11 @@ Pass these to `POST /api/v1/reconstructions/upload`:
 | `fvdb_sh_degree` | 0 – 4 | 3 | Spherical harmonics degree |
 | `fvdb_image_downsample_factor` | 1 – 12 | 6 | Input image downsampling for fVDB |
 | `splat_only_mode` | true/false | false | Skip USDZ, produce PLY only |
+| `collision_mesh_enabled` | true/false | true | Generate collision mesh from PLY |
+| `collision_mesh_method` | alpha / convex_hull | alpha | Mesh generation algorithm |
+| `collision_mesh_target_faces` | 500 – 500000 | 50000 | Target face count for the mesh |
+| `collision_mesh_alpha` | 0.01 – 100.0 | auto | Alpha shape parameter (0 = auto) |
+| `collision_mesh_downsample` | 1 – 64 | 4 | Point cloud downsampling before meshing |
 
 ---
 
@@ -238,9 +266,9 @@ make openapi
 Pipeline binaries (must be on PATH or configured via env vars):
 - **`ffmpeg`** — frame extraction
 - **`colmap`** — feature extraction, matching, sparse reconstruction
-- **3DGRUT** (default backend) — neural Gaussian reconstruction + NuRec USDZ export, installed at `/opt/3dgrut`, conda env `3dgrut` (see `NEMO_RECONSTRUCT_GRUT_INSTALL_DIR`)
+- **fVDB / `frgs`** (default backend) — fVDB Reality Capture, conda env `fvdb` (typically at `~/miniconda3/envs/fvdb/bin/frgs`)
+- **3DGRUT** (alternative backend) — neural Gaussian reconstruction + NuRec USDZ export, installed at `/opt/3dgrut`, conda env `3dgrut` (see `NEMO_RECONSTRUCT_GRUT_INSTALL_DIR`)
 - **CUDA toolkit** — headers at `/usr/local/cuda` for JIT C++ extension builds
-- **fVDB / `frgs`** (alternative backend) — conda env `fvdb` (typically at `~/miniconda3/envs/fvdb/bin/frgs`)
 
 All paths are configurable via environment variables or a `.env` file in the backend directory (prefix: `NEMO_RECONSTRUCT_`).
 
@@ -273,6 +301,7 @@ All paths are configurable via environment variables or a `.env` file in the bac
 |-----------|------|---------|
 | Ollama | 11434 | Local LLM (glm-4.7-flash) |
 | OpenShell Gateway | 8080 | Sandbox management + inference routing |
+| OpenClaw Gateway | 18789 | Agent runtime communication (in-sandbox) |
 | NemoReconstruct Backend | 8010 | FastAPI pipeline server |
 | NemoReconstruct Frontend | 3000 | Next.js dashboard (optional) |
 | `inference.local` | — | In-sandbox LLM endpoint → Ollama |
@@ -289,6 +318,33 @@ The [full tutorial](docs/NEMOCLAW_SETUP.md) has a dedicated section (Part 2) tha
 4. **Run the agent** — same `openshell sandbox create` pattern, just swap the paths
 
 The NemoClaw + OpenShell infrastructure (Ollama, gateway, provider, inference routing) is set up once and reused across all projects.
+
+---
+
+## References & Credits
+
+### Research Papers
+
+- **Mip-NeRF 360** — Barron, Mildenhall, Verbin, Srinivasan, Hedman. *"Mip-NeRF 360: Unbounded Anti-Aliased Neural Radiance Fields."* CVPR, 2022. [[arXiv:2111.12077](https://arxiv.org/abs/2111.12077)] [[Dataset](https://jonbarron.info/mipnerf360/)]
+- **3D Gaussian Splatting** — Kerbl, Kopanas, Leimkühler, Drettakis. *"3D Gaussian Splatting for Real-Time Radiance Field Rendering."* ACM TOG (SIGGRAPH), 2023. [[arXiv:2308.04079](https://arxiv.org/abs/2308.04079)] [[Code](https://github.com/graphdeco-inria/gaussian-splatting)]
+- **3DGRT** — Moenne-Loccoz, Mirzaei, Perel, de Lutio, Martinez Esturo, State, Fidler, Sharp, Gojcic. *"3D Gaussian Ray Tracing: Fast Tracing of Particle Scenes."* ACM TOG (SIGGRAPH Asia), 2024.
+- **3DGUT** — Wu, Martinez Esturo, Mirzaei, Moenne-Loccoz, Gojcic. *"3DGUT: Enabling Distorted Cameras and Secondary Rays in Gaussian Splatting."* CVPR, 2025 (Oral).
+- **fVDB** — Williams, Huang, Swartz, Klár, Thakkar, Cong, Ren, Li, et al. *"fVDB: A Deep-Learning Framework for Sparse, Large-Scale, and High-Performance Spatial Intelligence."* ACM TOG (SIGGRAPH), 2024. [[arXiv:2407.01781](https://arxiv.org/abs/2407.01781)]
+- **COLMAP** — Schönberger & Frahm. *"Structure-from-Motion Revisited."* CVPR, 2016. Schönberger, Zheng, Pollefeys, Frahm. *"Pixelwise View Selection for Unstructured Multi-View Stereo."* ECCV, 2016. [[Code](https://github.com/colmap/colmap)]
+
+### NVIDIA Tools & Platforms
+
+| Component | Description | Link |
+|-----------|-------------|------|
+| **3DGRUT** | 3D Gaussian Ray Tracing Unified Toolkit | [GitHub](https://github.com/nv-tlabs/3dgrut) |
+| **OpenShell** | Secure sandboxed runtime for AI agents | [GitHub](https://github.com/NVIDIA/OpenShell) |
+| **OpenClaw** | Self-hosted AI agent gateway | [Docs](https://docs.openclaw.ai/) |
+| **DGX Spark** | Compact AI computer (GB10 Grace Blackwell) | [Docs](https://docs.nvidia.com/dgx/dgx-spark/) |
+| **OpenShell Blueprint** | DGX Spark secure agent playbook | [build.nvidia.com](https://build.nvidia.com/spark/openshell) |
+
+### Other Open-Source Projects
+
+- **[Ollama](https://ollama.com)** — Local LLM inference server ([GitHub](https://github.com/ollama/ollama))
 
 ---
 

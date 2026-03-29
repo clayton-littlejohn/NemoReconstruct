@@ -1,5 +1,15 @@
 {
-  "_comment": "OpenClaw config template for use inside an OpenShell sandbox. Copy and customize for your project.",
+  "_comment": [
+    "OpenClaw config template — copy and customize for your project:",
+    "  cp sandbox-openclaw-template.json sandbox-openclaw.json",
+    "",
+    "This tells the OpenClaw agent harness (inside the sandbox) how to",
+    "reach the LLM and what tools are available. Both Agent A and Agent B",
+    "use this same config.",
+    "",
+    "CHANGE: model id/name to match your Ollama model (ollama list)",
+    "CHANGE: workspace path to match your --upload target"
+  ],
   "models": {
     "mode": "merge",
     "providers": {
@@ -29,7 +39,8 @@
     }
   },
   "tools": {
-    "profile": "coding"
+    "profile": "coding",
+    "deny": ["web_fetch"]
   },
   "commands": {
     "native": "auto",
