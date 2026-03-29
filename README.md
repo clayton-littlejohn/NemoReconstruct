@@ -27,17 +27,21 @@ git clone https://github.com/clayton-littlejohn/NemoReconstruct.git ~/NemoRecons
 cd ~/NemoReconstruct
 make setup                    # creates .venv, installs Python + Node deps
 
-# 2. Start the backend (leave running)
+# 2. Download a dataset (optional — or bring your own video)
+./scripts/download_datasets.sh garden   # downloads garden scene (~2.8 GB)
+make list-datasets                      # see all available scenes
+
+# 3. Start the backend (leave running)
 make backend-dev              # starts on 0.0.0.0:8010
 
-# 3. One-time OpenShell + Ollama setup (see full guide for details)
+# 4. One-time OpenShell + Ollama setup (see full guide for details)
 openshell gateway start --gpu
 openshell provider create --name ollama --type openai \
   --credential OPENAI_API_KEY=empty \
   --config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1
 openshell inference set --provider ollama --model glm-4.7-flash
 
-# 4. Run the agent in a sandbox
+# 5. Run the agent in a sandbox
 openshell sandbox create \
   --from openclaw \
   --policy nemoclaw/sandbox-policy.yaml \
@@ -60,6 +64,7 @@ openclaw agent --local --session-id demo \
 ## What the Agent Can Do
 
 - Upload videos and start reconstruction jobs
+- Select pre-loaded dataset scenes (Mip-NeRF 360) and run full agent workflows
 - Tune parameters (iterations, downsample factor, render method, quality presets)
 - Monitor progress in real time
 - Download NuRec USDZ and PLY splat outputs
@@ -68,15 +73,48 @@ openclaw agent --local --session-id demo \
 
 ---
 
+## Datasets
+
+NemoReconstruct supports the **Mip-NeRF 360** dataset for benchmarking and testing reconstruction workflows without needing your own video.
+
+```bash
+# Download all 7 scenes (~12 GB)
+make download-datasets
+
+# Download specific scenes
+./scripts/download_datasets.sh garden room
+
+# List available scenes and what's already downloaded
+make list-datasets
+```
+
+| Scene | Type | Images | Size |
+|-------|------|--------|------|
+| bicycle | outdoor | 291 | ~2.3 GB |
+| bonsai | indoor | 311 | ~1.3 GB |
+| counter | indoor | 312 | ~1.2 GB |
+| garden | outdoor | 185 | ~2.8 GB |
+| kitchen | indoor | 315 | ~1.5 GB |
+| room | indoor | 311 | ~1.3 GB |
+| stump | outdoor | 295 | ~1.4 GB |
+
+Scenes are downloaded from the original source at [jonbarron.info/mipnerf360](https://jonbarron.info/mipnerf360/) and extracted into `data/<scene>/`. Each scene includes full-resolution images, COLMAP sparse models, and pre-computed downsampled image sets.
+
+Once downloaded, scenes appear in the frontend dashboard under the "Dataset" tab and can be submitted to the agent workflow.
+
+---
+
 ## Project Structure
 
 ```
 backend/          FastAPI API, SQLite job store, background runner
 frontend/         Next.js upload dashboard
+scripts/          Dataset download and setup scripts
 sdk/python/       Python client for agents and automation
 sdk/typescript/   TypeScript client
 nemoclaw/         Agent config, system prompt, sandbox policy, example scripts
 docs/             OpenAPI schema, setup guide
+data/             Downloaded dataset scenes (git-ignored)
 ```
 
 ### NemoClaw Config Files
@@ -103,6 +141,8 @@ docs/             OpenAPI schema, setup guide
 | GET | `/health` | Health check |
 | GET | `/api/v1/pipelines` | List available pipelines |
 | POST | `/api/v1/reconstructions/upload` | Upload video + start reconstruction |
+| POST | `/api/v1/reconstructions/from-dataset` | Create reconstruction from a downloaded dataset scene |
+| GET | `/api/v1/datasets` | List available dataset scenes in `data/` |
 | GET | `/api/v1/reconstructions` | List all jobs |
 | GET | `/api/v1/reconstructions/{id}` | Job details |
 | GET | `/api/v1/reconstructions/{id}/status` | Poll status + progress |

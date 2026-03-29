@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.models import IterationRecord, Reconstruction, ReconstructionStatus
-from app.schemas import DeleteResponse, IterationHistoryResponse, IterationSummary, MetricsResponse, MetricsEntry, NotesUpdate, PipelineInfo, ReconstructionArtifacts, ReconstructionDetail, ReconstructionParams, ReconstructionStatusResponse, RetryRequest, RetryResponse, UploadResponse
+from app.schemas import DatasetInfo, DeleteResponse, IterationHistoryResponse, IterationSummary, MetricsResponse, MetricsEntry, NotesUpdate, PipelineInfo, ReconstructionArtifacts, ReconstructionDetail, ReconstructionParams, ReconstructionStatusResponse, RetryRequest, RetryResponse, UploadResponse
 from app.services.pipeline import PIPELINE_INFO
 from app.services.storage import ensure_parent, remove_workspace
 from app.workers.runner import runner
@@ -132,6 +132,118 @@ def get_reconstruction_or_404(db: Session, reconstruction_id: str) -> Reconstruc
 @router.get("/pipelines", response_model=list[PipelineInfo], tags=["pipelines"])
 def list_pipelines() -> list[PipelineInfo]:
     return [PipelineInfo(**PIPELINE_INFO)]
+
+
+@router.get("/datasets", response_model=list[DatasetInfo], tags=["datasets"])
+def list_datasets() -> list[DatasetInfo]:
+    data_dir = settings.data_dir
+    if not data_dir.is_dir():
+        return []
+    datasets: list[DatasetInfo] = []
+    for child in sorted(data_dir.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        images_dir = child / "images"
+        image_count = len(list(images_dir.glob("*.JPG")) + list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.png"))) if images_dir.is_dir() else 0
+        has_sparse = (child / "sparse" / "0" / "cameras.bin").exists()
+        factors = []
+        for sub in sorted(child.iterdir()):
+            if sub.is_dir() and sub.name.startswith("images_"):
+                try:
+                    factors.append(int(sub.name.split("_")[1]))
+                except ValueError:
+                    pass
+        datasets.append(DatasetInfo(
+            name=child.name,
+            image_count=image_count,
+            has_sparse=has_sparse,
+            downsampled_factors=factors,
+            description=f"{image_count} images, COLMAP sparse model {'available' if has_sparse else 'missing'}",
+        ))
+    return datasets
+
+
+@router.post("/reconstructions/from-dataset", response_model=UploadResponse, status_code=201)
+def create_from_dataset(
+    dataset_name: str = Form(...),
+    name: str = Form(...),
+    description: str | None = Form(None),
+    frame_rate: float | None = Form(None),
+    sequential_matcher_overlap: int | None = Form(None),
+    colmap_mapper_type: str | None = Form(None),
+    colmap_max_num_features: int | None = Form(None),
+    reconstruction_backend: str | None = Form(None),
+    fvdb_max_epochs: int | None = Form(None),
+    fvdb_sh_degree: int | None = Form(None),
+    fvdb_image_downsample_factor: int | None = Form(None),
+    grut_n_iterations: int | None = Form(None),
+    grut_render_method: str | None = Form(None),
+    grut_strategy: str | None = Form(None),
+    grut_downsample_factor: int | None = Form(None),
+    splat_only_mode: bool | None = Form(None),
+    collision_mesh_enabled: bool | None = Form(None),
+    collision_mesh_method: str | None = Form(None),
+    collision_mesh_target_faces: int | None = Form(None),
+    collision_mesh_alpha: float | None = Form(None),
+    collision_mesh_downsample: int | None = Form(None),
+    db: Session = Depends(get_db),
+) -> UploadResponse:
+    dataset_path = (settings.data_dir / dataset_name).resolve()
+    if not dataset_path.is_dir() or not dataset_path.is_relative_to(settings.data_dir.resolve()):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    dataset_images = dataset_path / "images"
+    dataset_sparse = dataset_path / "sparse" / "0"
+    if not dataset_images.is_dir() or not dataset_sparse.is_dir():
+        raise HTTPException(status_code=400, detail="Dataset missing images/ or sparse/0/ directory")
+
+    processing_params = build_processing_params(
+        frame_rate, sequential_matcher_overlap, colmap_mapper_type,
+        colmap_max_num_features, reconstruction_backend, fvdb_max_epochs,
+        fvdb_sh_degree, fvdb_image_downsample_factor, grut_n_iterations,
+        grut_render_method, grut_strategy, grut_downsample_factor,
+        splat_only_mode, collision_mesh_enabled, collision_mesh_method,
+        collision_mesh_target_faces, collision_mesh_alpha, collision_mesh_downsample,
+    )
+
+    reconstruction = Reconstruction(
+        name=name,
+        description=description,
+        status=ReconstructionStatus.uploading.value,
+        source_video_filename=f"{dataset_name} (dataset)",
+        source_video_path=str(dataset_path),
+        workspace_dir="",
+        processing_params_json=processing_params.model_dump_json(exclude_none=True),
+    )
+    db.add(reconstruction)
+    db.commit()
+    db.refresh(reconstruction)
+
+    workspace_dir = settings.storage_dir / reconstruction.id
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy images and sparse model from dataset into workspace
+    workspace_images = workspace_dir / "images"
+    workspace_sparse = workspace_dir / "sparse" / "0"
+    shutil.copytree(str(dataset_images), str(workspace_images))
+    workspace_sparse.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(str(dataset_sparse), str(workspace_sparse))
+
+    # Also copy any downsampled image directories (images_2, images_4, etc.)
+    for sub in sorted(dataset_path.iterdir()):
+        if sub.is_dir() and sub.name.startswith("images_"):
+            shutil.copytree(str(sub), str(workspace_dir / sub.name))
+
+    reconstruction.workspace_dir = str(workspace_dir)
+    reconstruction.status = ReconstructionStatus.queued.value
+    reconstruction.processing_step = "queued"
+    reconstruction.processing_pct = 1
+    db.add(reconstruction)
+    db.commit()
+    db.refresh(reconstruction)
+
+    runner.enqueue(reconstruction.id)
+    return UploadResponse(**serialize_reconstruction(reconstruction).model_dump())
 
 
 @router.post("/reconstructions/upload", response_model=UploadResponse, status_code=201)

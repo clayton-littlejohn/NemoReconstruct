@@ -35,7 +35,7 @@ PIPELINE_INFO = {
         "sequential_matcher_overlap": "COLMAP sequential matcher overlap window (2-50, default 12)",
         "colmap_mapper_type": "COLMAP mapper algorithm: 'incremental' (default, robust) or 'global' (faster on large scenes, uses GLOMAP)",
         "colmap_max_num_features": "Max SIFT features per image (1000-32768, default 8192). More features = better matching but slower",
-        "reconstruction_backend": "Reconstruction backend: '3dgrut' (default, NVIDIA 3D Gaussian Ray Tracing) or 'fvdb' (fVDB Reality Capture / frgs)",
+        "reconstruction_backend": "Reconstruction backend: 'fvdb' (default, fVDB Reality Capture / frgs, fast) or '3dgrut' (NVIDIA 3D Gaussian Ray Tracing, higher quality)",
         "fvdb_max_epochs": "fVDB training epochs (5-500, default 40). Only used when backend=fvdb",
         "fvdb_sh_degree": "Spherical harmonics degree for splats (0-4, default 3). Only used when backend=fvdb",
         "fvdb_image_downsample_factor": "Input image downsampling for fVDB (1-12, default 6). Only used when backend=fvdb",
@@ -218,7 +218,7 @@ def run_command(
 
 
 def count_frames(frames_dir: Path) -> int:
-    return len(sorted(frames_dir.glob("*.png")))
+    return len([f for f in frames_dir.iterdir() if f.suffix.lower() in (".png", ".jpg", ".jpeg")])
 
 
 def create_downsampled_images(images_dir: Path, factor: int, log_path: Path) -> None:
@@ -229,7 +229,9 @@ def create_downsampled_images(images_dir: Path, factor: int, log_path: Path) -> 
     if dest.exists() and any(dest.iterdir()):
         return  # already created
     dest.mkdir(parents=True, exist_ok=True)
-    for src_img in sorted(images_dir.glob("*.png")):
+    for src_img in sorted(images_dir.iterdir()):
+        if src_img.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+            continue
         run_command(
             ["ffmpeg", "-y", "-i", str(src_img),
              "-vf", f"scale=iw/{factor}:ih/{factor}",
@@ -240,7 +242,13 @@ def create_downsampled_images(images_dir: Path, factor: int, log_path: Path) -> 
 
 def has_valid_preprocessing(paths: JobPaths) -> bool:
     """Check if ffmpeg + COLMAP output already exists and is usable."""
-    if not paths.images_dir.exists() or not any(paths.images_dir.glob("*.png")):
+    if not paths.images_dir.exists():
+        return False
+    has_images = any(
+        f.suffix.lower() in (".png", ".jpg", ".jpeg")
+        for f in paths.images_dir.iterdir()
+    )
+    if not has_images:
         return False
     sparse_model = paths.sparse_dir / "0"
     if not sparse_model.exists():
@@ -253,15 +261,12 @@ def has_valid_preprocessing(paths: JobPaths) -> bool:
 
 def reset_workspace(paths: JobPaths, reconstruction_only: bool = False) -> None:
     if reconstruction_only:
-        # Only reset reconstruction output; keep images, sparse, database
+        # Only reset reconstruction output; keep images, sparse, database,
+        # and any pre-existing downsampled image dirs (images_2, images_4, etc.)
         for path in [paths.fvdb_dir, paths.grut_dir, paths.collision_mesh_dir]:
             if path.exists():
                 shutil.rmtree(path)
             path.mkdir(parents=True, exist_ok=True)
-        # Clean up downsampled image dirs (will be regenerated from existing images)
-        for old_dir in paths.root.glob("images_*"):
-            if old_dir.is_dir():
-                shutil.rmtree(old_dir)
         for file_path in [paths.log_path, paths.metadata_path, paths.bundle_path]:
             if file_path.exists():
                 file_path.unlink()

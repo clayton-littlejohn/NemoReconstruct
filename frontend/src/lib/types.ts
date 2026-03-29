@@ -119,6 +119,14 @@ export type WorkflowDetail = {
   updated_at: string;
 };
 
+export type DatasetInfo = {
+  name: string;
+  image_count: number;
+  has_sparse: boolean;
+  downsampled_factors: number[];
+  description: string;
+};
+
 export type IterationSummary = {
   iteration: number;
   params: ReconstructionParams;

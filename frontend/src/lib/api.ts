@@ -1,4 +1,5 @@
 import type {
+  DatasetInfo,
   IterationHistoryResponse,
   MetricsResponse,
   PipelineInfo,
@@ -27,6 +28,33 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export async function getPipelines(): Promise<PipelineInfo[]> {
   return fetchJson<PipelineInfo[]>(`${API_PREFIX}/pipelines`);
+}
+
+export async function getDatasets(): Promise<DatasetInfo[]> {
+  return fetchJson<DatasetInfo[]>(`${API_PREFIX}/datasets`);
+}
+
+export function createFromDataset(
+  datasetName: string,
+  name: string,
+  description?: string,
+  params?: ReconstructionParams,
+): Promise<ReconstructionDetail> {
+  const form = new FormData();
+  form.append("dataset_name", datasetName);
+  form.append("name", name);
+  if (description) form.append("description", description);
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null) {
+        form.append(key, String(value));
+      }
+    }
+  }
+  return fetchJson<ReconstructionDetail>(`${API_PREFIX}/reconstructions/from-dataset`, {
+    method: "POST",
+    body: form,
+  });
 }
 
 export async function getReconstructions(): Promise<ReconstructionDetail[]> {
@@ -173,5 +201,26 @@ export function startWorkflow(
     form.append("accept_psnr_threshold", String(acceptPsnrThreshold));
     form.append("accept_ssim_threshold", String(acceptSsimThreshold));
     xhr.send(form);
+  });
+}
+
+export async function startWorkflowFromDataset(
+  datasetName: string,
+  sceneName: string,
+  maxIterations: number = 3,
+  acceptPsnrThreshold: number = 25.0,
+  acceptSsimThreshold: number = 0.85,
+  reconstructionBackend: string = "fvdb",
+): Promise<WorkflowDetail> {
+  const form = new FormData();
+  form.append("dataset_name", datasetName);
+  form.append("scene_name", sceneName);
+  form.append("max_iterations", String(maxIterations));
+  form.append("accept_psnr_threshold", String(acceptPsnrThreshold));
+  form.append("accept_ssim_threshold", String(acceptSsimThreshold));
+  form.append("reconstruction_backend", reconstructionBackend);
+  return fetchJson<WorkflowDetail>(`${API_PREFIX}/workflows/start-from-dataset`, {
+    method: "POST",
+    body: form,
   });
 }

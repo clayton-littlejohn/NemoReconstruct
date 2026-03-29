@@ -32,6 +32,14 @@ class HealthResponse(BaseModel):
     service: str = "NemoReconstruct"
 
 
+class DatasetInfo(BaseModel):
+    name: str
+    image_count: int
+    has_sparse: bool
+    downsampled_factors: list[int] = Field(default_factory=list)
+    description: str = ""
+
+
 class PipelineInfo(BaseModel):
     slug: str
     name: str

@@ -5,16 +5,18 @@ import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react
 import {
   absoluteArtifactUrl,
   deleteReconstruction,
+  getDatasets,
   getIterationHistory,
   getMetrics,
   getReconstructions,
   getWorkflows,
   retryReconstruction,
   startWorkflow,
+  startWorkflowFromDataset,
   stopWorkflow,
   deleteWorkflow,
 } from "@/lib/api";
-import type { IterationHistoryResponse, IterationSummary, MetricsResponse, ReconstructionDetail, ReconstructionParams, WorkflowDetail } from "@/lib/types";
+import type { DatasetInfo, IterationHistoryResponse, IterationSummary, MetricsResponse, ReconstructionDetail, ReconstructionParams, WorkflowDetail } from "@/lib/types";
 
 
 function formatTime(value: string | null): string {
@@ -124,16 +126,29 @@ function WorkflowPipeline({ workflow, onStop, onDelete }: { workflow: WorkflowDe
 
 
 /* ── Upload + start workflow ── */
+type SourceMode = "dataset" | "video";
+
 function WorkflowStarter({ onStarted }: { onStarted: () => void }) {
+  const [mode, setMode] = useState<SourceMode>("dataset");
+  const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
+  const [selectedDataset, setSelectedDataset] = useState<string>("");
   const [file, setFile] = useState<File | null>(null);
   const [sceneName, setSceneName] = useState("");
   const [maxIter, setMaxIter] = useState(3);
   const [psnrThreshold, setPsnrThreshold] = useState(25.0);
   const [ssimThreshold, setSsimThreshold] = useState(0.85);
+  const [backend, setBackend] = useState<string>("fvdb");
   const [uploading, setUploading] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+
+  useEffect(() => {
+    getDatasets().then((ds) => {
+      setDatasets(ds);
+      if (ds.length > 0 && !selectedDataset) setSelectedDataset(ds[0].name);
+    }).catch((err) => { console.error("getDatasets failed:", err); });
+  }, []);
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
@@ -147,12 +162,18 @@ function WorkflowStarter({ onStarted }: { onStarted: () => void }) {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!file) return;
     setError(null);
     setUploading(true);
     setUploadPct(0);
     try {
-      await startWorkflow(file, sceneName || file.name.replace(/\.[^.]+$/, ""), maxIter, setUploadPct, psnrThreshold, ssimThreshold);
+      if (mode === "dataset") {
+        if (!selectedDataset) throw new Error("Select a dataset");
+        const recName = sceneName || selectedDataset;
+        await startWorkflowFromDataset(selectedDataset, recName, maxIter, psnrThreshold, ssimThreshold, backend);
+      } else {
+        if (!file) throw new Error("Select a video file");
+        await startWorkflow(file, sceneName || file.name.replace(/\.[^.]+$/, ""), maxIter, setUploadPct, psnrThreshold, ssimThreshold);
+      }
       setFile(null);
       setSceneName("");
       onStarted();
@@ -163,45 +184,105 @@ function WorkflowStarter({ onStarted }: { onStarted: () => void }) {
     }
   }
 
+  const canSubmit = mode === "dataset" ? !!selectedDataset && !uploading : !!file && !uploading;
+
   return (
     <form className="wf-starter" onSubmit={handleSubmit}>
-      <div
-        className={`wf-dropzone${dragActive ? " wf-dropzone-active" : ""}${file ? " wf-dropzone-has-file" : ""}`}
-        onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
-        onDragLeave={() => setDragActive(false)}
-        onDrop={handleDrop}
-        onClick={() => document.getElementById("wf-file-input")?.click()}
-      >
-        {file ? (
-          <div className="wf-file-info">
-            <span className="wf-file-icon">&#x1f3ac;</span>
-            <span>{file.name}</span>
-            <span className="subtle-line">{(file.size / 1024 / 1024).toFixed(1)} MB</span>
-          </div>
-        ) : (
-          <div className="wf-drop-prompt">
-            <span className="wf-drop-icon">&#x2B06;</span>
-            <span>Drop a .MOV file here or click to browse</span>
-          </div>
-        )}
-        <input
-          id="wf-file-input"
-          type="file"
-          accept="video/quicktime,video/mp4,.mov,.mp4,.m4v"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) {
-              setFile(f);
-              if (!sceneName) setSceneName(f.name.replace(/\.[^.]+$/, ""));
-            }
-          }}
-        />
+      {/* Mode selector tabs */}
+      <div className="source-tabs">
+        <button type="button" className={`source-tab${mode === "dataset" ? " source-tab-active" : ""}`} onClick={() => setMode("dataset")}>
+          &#x1F4C2; Select Dataset
+        </button>
+        <button type="button" className={`source-tab${mode === "video" ? " source-tab-active" : ""}`} onClick={() => setMode("video")}>
+          &#x1F3AC; Upload Video
+        </button>
       </div>
+
+      {mode === "dataset" ? (
+        <div className="dataset-picker">
+          {datasets.length === 0 ? (
+            <div className="dataset-empty">No datasets found in <code>data/</code> directory</div>
+          ) : (
+            <div className="dataset-grid">
+              {datasets.map((ds) => (
+                <label
+                  key={ds.name}
+                  className={`dataset-card${selectedDataset === ds.name ? " dataset-card-selected" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="dataset"
+                    value={ds.name}
+                    checked={selectedDataset === ds.name}
+                    onChange={() => {
+                      setSelectedDataset(ds.name);
+                      if (!sceneName) setSceneName(ds.name);
+                    }}
+                  />
+                  <div className="dataset-card-body">
+                    <span className="dataset-icon">&#x1F5BC;</span>
+                    <strong>{ds.name}</strong>
+                    <span className="dataset-meta">{ds.image_count} images</span>
+                    {ds.has_sparse ? (
+                      <span className="dataset-badge dataset-badge-ok">COLMAP ready</span>
+                    ) : (
+                      <span className="dataset-badge dataset-badge-warn">needs COLMAP</span>
+                    )}
+                    {ds.downsampled_factors.length > 0 ? (
+                      <span className="dataset-meta">downsampled: {ds.downsampled_factors.map((f) => `${f}x`).join(", ")}</span>
+                    ) : null}
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div
+          className={`wf-dropzone${dragActive ? " wf-dropzone-active" : ""}${file ? " wf-dropzone-has-file" : ""}`}
+          onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={handleDrop}
+          onClick={() => document.getElementById("wf-file-input")?.click()}
+        >
+          {file ? (
+            <div className="wf-file-info">
+              <span className="wf-file-icon">&#x1f3ac;</span>
+              <span>{file.name}</span>
+              <span className="subtle-line">{(file.size / 1024 / 1024).toFixed(1)} MB</span>
+            </div>
+          ) : (
+            <div className="wf-drop-prompt">
+              <span className="wf-drop-icon">&#x2B06;</span>
+              <span>Drop a .MOV file here or click to browse</span>
+            </div>
+          )}
+          <input
+            id="wf-file-input"
+            type="file"
+            accept="video/quicktime,video/mp4,.mov,.mp4,.m4v"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) {
+                setFile(f);
+                if (!sceneName) setSceneName(f.name.replace(/\.[^.]+$/, ""));
+              }
+            }}
+          />
+        </div>
+      )}
       <div className="wf-fields">
         <label>
           <span>Scene name</span>
           <input value={sceneName} onChange={(e) => setSceneName(e.target.value)} placeholder="my-scene" />
+        </label>
+        <label>
+          <span>Engine</span>
+          <select value={backend} onChange={(e) => setBackend(e.target.value)}>
+            <option value="fvdb">fVDB (fast)</option>
+            <option value="3dgrut">3DGRUT</option>
+          </select>
         </label>
         <label>
           <span>Max iterations</span>
@@ -215,7 +296,7 @@ function WorkflowStarter({ onStarted }: { onStarted: () => void }) {
           <span>SSIM threshold</span>
           <input type="number" min={0.5} max={1.0} step={0.01} value={ssimThreshold} onChange={(e) => setSsimThreshold(Number(e.target.value))} />
         </label>
-        <button type="submit" disabled={!file || uploading}>
+        <button type="submit" disabled={!canSubmit}>
           {uploading ? `Uploading ${uploadPct}%` : "Start Workflow"}
         </button>
       </div>
@@ -373,7 +454,7 @@ function DetailPanel({
   const pp = prevItem?.processing_params;
   const s = metrics?.summary;
   const ps = prevMetrics?.summary;
-  const backend = p.reconstruction_backend ?? "3dgrut";
+  const backend = p.reconstruction_backend ?? "fvdb";
 
   // Parse agent notes and reverse so newest is on top
   const noteLines = item.description ? item.description.split("\n").filter(Boolean).reverse() : [];
@@ -384,7 +465,7 @@ function DetailPanel({
       <div className="detail-section">
         <h3>Parameters{prevItem ? ` (vs ${prevItem.name})` : ""}</h3>
         <div className="param-grid">
-          <ParamDiff label="Backend" current={paramStr(p, "reconstruction_backend", "3dgrut")} previous={pp ? paramStr(pp, "reconstruction_backend", "3dgrut") : undefined} />
+          <ParamDiff label="Backend" current={paramStr(p, "reconstruction_backend", "fvdb")} previous={pp ? paramStr(pp, "reconstruction_backend", "fvdb") : undefined} />
           <ParamDiff label="Frame Rate" current={paramStr(p, "frame_rate", "2.0")} previous={pp ? paramStr(pp, "frame_rate", "2.0") : undefined} />
           <ParamDiff label="Mapper Type" current={paramStr(p, "colmap_mapper_type", "incremental")} previous={pp ? paramStr(pp, "colmap_mapper_type", "incremental") : undefined} />
           <ParamDiff label="Max Features" current={paramStr(p, "colmap_max_num_features", "8192")} previous={pp ? paramStr(pp, "colmap_max_num_features", "8192") : undefined} />
@@ -603,7 +684,7 @@ export default function ReconstructionDashboard() {
       {/* Agent workflow section */}
       <section className="wf-section">
         <h2>Agent Workflow</h2>
-        <p className="header-sub">Upload a .MOV video to start the multi-agent reconstruction pipeline</p>
+        <p className="header-sub">Select a dataset or upload a video to start the 3D reconstruction pipeline</p>
 
         <WorkflowStarter onStarted={() => refresh().catch(() => undefined)} />
 

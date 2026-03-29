@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     base_dir: Path = Path(__file__).resolve().parents[3]
     storage_dir: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[2] / "storage")
     database_path: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[2] / "data" / "nemo_reconstruct.db")
+    data_dir: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[3] / "data")
 
     ffmpeg_bin: str = "ffmpeg"
     colmap_bin: str = "colmap"
@@ -34,7 +35,7 @@ class Settings(BaseSettings):
     sequential_matcher_overlap: int = 12
     colmap_mapper_type: str = "incremental"
     colmap_max_num_features: int = 8192
-    reconstruction_backend: str = "3dgrut"
+    reconstruction_backend: str = "fvdb"
     fvdb_max_epochs: int = 40
     fvdb_sh_degree: int = 3
     fvdb_image_downsample_factor: int = 6

@@ -3,7 +3,7 @@ VENV_BIN  := $(VENV)/bin
 PYTHON    := $(VENV_BIN)/python
 PIP       := $(VENV_BIN)/pip
 
-.PHONY: backend-install backend-dev frontend-install frontend-dev openapi setup
+.PHONY: backend-install backend-dev frontend-install frontend-dev openapi setup download-datasets list-datasets
 
 # ── First-time setup ──────────────────────────────────────────────
 setup: $(VENV)/pyvenv.cfg backend-install frontend-install
@@ -25,3 +25,13 @@ frontend-dev:
 
 openapi: $(VENV)/pyvenv.cfg
 	cd backend && $(CURDIR)/$(PYTHON) export_openapi.py
+
+# ── Dataset management ────────────────────────────────────────────
+download-datasets:
+	./scripts/download_datasets.sh
+
+download-dataset-%:
+	./scripts/download_datasets.sh $*
+
+list-datasets:
+	./scripts/download_datasets.sh --list

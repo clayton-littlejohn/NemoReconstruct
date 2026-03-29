@@ -582,6 +582,39 @@ curl -s http://localhost:8010/health
 
 ---
 
+## Download Dataset Scenes (Optional)
+
+NemoReconstruct includes a download script for the **Mip-NeRF 360** benchmark dataset. These scenes let you test the full pipeline without needing your own video or images.
+
+```bash
+cd ~/NemoReconstruct
+
+# See what's available
+./scripts/download_datasets.sh --list
+
+# Download one or more scenes (garden is a good starting point — ~2.8 GB)
+./scripts/download_datasets.sh garden
+
+# Or download all 7 scenes (~12 GB total)
+make download-datasets
+```
+
+Scenes are extracted into `data/<scene>/` with pre-built COLMAP sparse models and downsampled image sets. Once downloaded, they appear in the frontend dashboard under the **Dataset** tab, or you can use them via the API:
+
+```bash
+# List available dataset scenes
+curl -s http://localhost:8010/api/v1/datasets
+
+# Start a reconstruction from a dataset scene
+curl -s -X POST http://localhost:8010/api/v1/reconstructions/from-dataset \
+  -H "Content-Type: application/json" \
+  -d '{"name": "garden-test", "dataset_scene": "garden"}'
+```
+
+> **Tip:** The zip file (~12 GB) is cached at `data/.360_v2.zip` after the first download. To free disk space after extracting, delete it: `rm data/.360_v2.zip`
+
+---
+
 ## Run the NemoReconstruct Agent
 
 The repo already includes the sandbox policy and OpenClaw config in `nemoclaw/`:

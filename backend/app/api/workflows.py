@@ -133,6 +133,80 @@ def start_workflow(
     return serialize_workflow(w)
 
 
+@router.post("/workflows/start-from-dataset", response_model=WorkflowDetail, status_code=201)
+def start_workflow_from_dataset(
+    dataset_name: str = Form(...),
+    scene_name: str = Form(...),
+    max_iterations: int = Form(3),
+    accept_psnr_threshold: float = Form(25.0),
+    accept_ssim_threshold: float = Form(0.85),
+    reconstruction_backend: str = Form("fvdb"),
+    db: Session = Depends(get_db),
+) -> WorkflowDetail:
+    dataset_path = (settings.data_dir / dataset_name).resolve()
+    if not dataset_path.is_dir() or not dataset_path.is_relative_to(settings.data_dir.resolve()):
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    w = Workflow(
+        scene_name=scene_name,
+        video_filename=f"{dataset_name} (dataset)",
+        video_path=str(dataset_path),
+        status="pending",
+        max_iterations=max_iterations,
+        accept_psnr_threshold=accept_psnr_threshold,
+        accept_ssim_threshold=accept_ssim_threshold,
+    )
+    db.add(w)
+    db.commit()
+    db.refresh(w)
+
+    w.status = "running"
+    w.current_step = "starting"
+    db.add(w)
+    db.commit()
+    db.refresh(w)
+
+    # Launch orchestrate.sh in dataset mode
+    orchestrate_script = settings.base_dir / "nemoclaw" / "orchestrate.sh"
+    if not orchestrate_script.exists():
+        w.status = "failed"
+        w.error_message = "orchestrate.sh not found"
+        db.add(w)
+        db.commit()
+        db.refresh(w)
+        return serialize_workflow(w)
+
+    env_vars = {
+        "WORKFLOW_ID": w.id,
+        "WORKFLOW_API_URL": "http://127.0.0.1:8010",
+        "AGENT_TIMEOUT": "600",
+        "ACCEPT_PSNR_THRESHOLD": str(w.accept_psnr_threshold),
+        "ACCEPT_SSIM_THRESHOLD": str(w.accept_ssim_threshold),
+        "INITIAL_BACKEND": reconstruction_backend,
+    }
+
+    proc_env = os.environ.copy()
+    proc_env.update(env_vars)
+
+    log_dir = settings.base_dir / "workflow_videos"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    proc = subprocess.Popen(
+        [str(orchestrate_script), "--dataset", dataset_name, scene_name, str(max_iterations)],
+        env=proc_env,
+        stdout=open(log_dir / f"{w.id}.log", "w"),
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+    w.pid = proc.pid
+    db.add(w)
+    db.commit()
+    db.refresh(w)
+
+    return serialize_workflow(w)
+
+
 @router.patch("/workflows/{workflow_id}/state", response_model=WorkflowDetail)
 def update_workflow_state(
     workflow_id: str,

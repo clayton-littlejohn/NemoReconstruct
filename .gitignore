@@ -17,6 +17,8 @@ backend/storage/*
 !backend/storage/.gitkeep
 backend/data/*
 !backend/data/.gitkeep
+data/*
+!data/.gitkeep
 frontend/.env.local
 npm-debug.log*
 yarn-debug.log*
@@ -27,3 +29,12 @@ workflow_videos/
 *.mov
 *.mp4
 *.avi
+
+# OpenClaw agent persona files (auto-created by openclaw base image)
+AGENTS.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+memory/

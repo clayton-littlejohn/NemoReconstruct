@@ -26,26 +26,46 @@ API_URL="http://${API_HOST}:${API_PORT}"
 WORKFLOW_API_URL="${WORKFLOW_API_URL:-http://127.0.0.1:${API_PORT}}"
 WORKFLOW_ID="${WORKFLOW_ID:-}"
 
-VIDEO_PATH="${1:?Usage: orchestrate.sh <video_path> <scene_name> [max_iterations]}"
-SCENE_NAME="${2:?Usage: orchestrate.sh <video_path> <scene_name> [max_iterations]}"
-MAX_ITERATIONS="${3:-3}"
+# Support two modes:
+#   1. Video mode:   orchestrate.sh <video_path> <scene_name> [max_iterations]
+#   2. Dataset mode:  orchestrate.sh --dataset <dataset_name> <scene_name> [max_iterations]
+DATASET_MODE=false
+DATASET_NAME=""
+VIDEO_PATH=""
+
+if [[ "${1:-}" == "--dataset" ]]; then
+    DATASET_MODE=true
+    DATASET_NAME="${2:?Usage: orchestrate.sh --dataset <dataset_name> <scene_name> [max_iterations]}"
+    SCENE_NAME="${3:?Usage: orchestrate.sh --dataset <dataset_name> <scene_name> [max_iterations]}"
+    MAX_ITERATIONS="${4:-3}"
+else
+    VIDEO_PATH="${1:?Usage: orchestrate.sh <video_path> <scene_name> [max_iterations]}"
+    SCENE_NAME="${2:?Usage: orchestrate.sh <video_path> <scene_name> [max_iterations]}"
+    MAX_ITERATIONS="${3:-3}"
+fi
+
 TIMEOUT="${AGENT_TIMEOUT:-1200}"
 ACCEPT_PSNR="${ACCEPT_PSNR_THRESHOLD:-25.0}"
 ACCEPT_SSIM="${ACCEPT_SSIM_THRESHOLD:-0.85}"
 
 # Validate inputs
-if [[ ! -f "$VIDEO_PATH" ]]; then
-    echo "Error: Video file not found: $VIDEO_PATH"
-    exit 1
+if [[ "$DATASET_MODE" == "false" ]]; then
+    if [[ ! -f "$VIDEO_PATH" ]]; then
+        echo "Error: Video file not found: $VIDEO_PATH"
+        exit 1
+    fi
+    # Resolve to absolute path
+    VIDEO_PATH="$(cd "$(dirname "$VIDEO_PATH")" && pwd)/$(basename "$VIDEO_PATH")"
 fi
-
-# Resolve to absolute path
-VIDEO_PATH="$(cd "$(dirname "$VIDEO_PATH")" && pwd)/$(basename "$VIDEO_PATH")"
 
 echo "============================================"
 echo " NemoClaw Multi-Agent Reconstruction"
 echo "============================================"
+if [[ "$DATASET_MODE" == "true" ]]; then
+echo " Dataset:        $DATASET_NAME"
+else
 echo " Video:          $VIDEO_PATH"
+fi
 echo " Scene:          $SCENE_NAME"
 echo " Max iterations: $MAX_ITERATIONS"
 echo " PSNR threshold: $ACCEPT_PSNR"
@@ -80,7 +100,10 @@ run_agent() {
     trap "rm -rf '$stage_dir'" RETURN
 
     cp -a "$SCRIPT_DIR" "$stage_dir/nemoclaw"
-    ln -s "$VIDEO_PATH" "$stage_dir/$(basename "$VIDEO_PATH")"
+    # Only link the video file if we have one (video mode, not dataset mode)
+    if [[ -n "$VIDEO_PATH" && -f "$VIDEO_PATH" ]]; then
+        ln -s "$VIDEO_PATH" "$stage_dir/$(basename "$VIDEO_PATH")"
+    fi
 
     # Use 'timeout' as a hard kill-switch since openclaw's --timeout is unreliable.
     # Allow TIMEOUT for agent work + 120s overhead for upload/bootstrap.
@@ -375,11 +398,17 @@ echo "============================================"
 echo " Iteration 1: Initial Run"
 echo "============================================"
 
-VIDEO_BASENAME="$(basename "$VIDEO_PATH")"
-VIDEO_EXT="${VIDEO_BASENAME##*.}"
-SANDBOX_VIDEO="/sandbox/NemoReconstruct/${VIDEO_BASENAME}"
+if [[ "$DATASET_MODE" == "true" ]]; then
+    # Dataset mode: runner uses the from-dataset API
+    RUNNER_MSG="Check the backend health at ${API_URL}. Then start a reconstruction from the pre-existing dataset '${DATASET_NAME}' using curl to POST to ${API_URL}/api/v1/reconstructions/from-dataset. Use these form fields: dataset_name=${DATASET_NAME}, name=${SCENE_NAME}, reconstruction_backend=${INITIAL_BACKEND:-fvdb}. After posting, extract the reconstruction ID from the response. Then poll the status using a shell loop: run 'while true; do sleep 30; curl -s ${API_URL}/api/v1/reconstructions/<ID>/status; done' and wait for it to show completed or failed. Report the reconstruction ID and final status."
+else
+    # Video mode: runner uploads the video file
+    VIDEO_BASENAME="$(basename "$VIDEO_PATH")"
+    VIDEO_EXT="${VIDEO_BASENAME##*.}"
+    SANDBOX_VIDEO="/sandbox/NemoReconstruct/${VIDEO_BASENAME}"
 
-RUNNER_MSG="Check the backend health at ${API_URL}. Then upload the video at ${SANDBOX_VIDEO} with name '${SCENE_NAME}' using curl to the API at ${API_URL}. Use these form fields: file=@${SANDBOX_VIDEO}, name=${SCENE_NAME}, reconstruction_backend=${INITIAL_BACKEND:-3dgrut}, grut_n_iterations=${INITIAL_GRUT_ITERS:-5000}, grut_downsample_factor=${INITIAL_GRUT_DS:-4}, frame_rate=${INITIAL_FRAME_RATE:-1.0}, splat_only_mode=${INITIAL_SPLAT_ONLY:-false}. After uploading, poll the status using a shell loop: run 'while true; do sleep 30; curl -s ${API_URL}/api/v1/reconstructions/<ID>/status; done' and wait for it to show completed or failed. Report the reconstruction ID and final status."
+    RUNNER_MSG="Check the backend health at ${API_URL}. Then upload the video at ${SANDBOX_VIDEO} with name '${SCENE_NAME}' using curl to the API at ${API_URL}. Use these form fields: file=@${SANDBOX_VIDEO}, name=${SCENE_NAME}, reconstruction_backend=${INITIAL_BACKEND:-3dgrut}, grut_n_iterations=${INITIAL_GRUT_ITERS:-5000}, grut_downsample_factor=${INITIAL_GRUT_DS:-4}, frame_rate=${INITIAL_FRAME_RATE:-1.0}, splat_only_mode=${INITIAL_SPLAT_ONLY:-false}. After uploading, poll the status using a shell loop: run 'while true; do sleep 30; curl -s ${API_URL}/api/v1/reconstructions/<ID>/status; done' and wait for it to show completed or failed. Report the reconstruction ID and final status."
+fi
 
 echo "[orchestrator] Starting Runner agent..."
 echo ""
@@ -404,7 +433,7 @@ update_workflow "{\"reconstruction_id\":\"${RECONSTRUCTION_ID}\",\"current_step\
 
 # Wait for the pipeline to actually reach a terminal state.
 # The runner agent may time out before training completes.
-JOB_STATUS=$(wait_for_completion "$RECONSTRUCTION_ID" 30 2400 | tail -1)
+JOB_STATUS=$(wait_for_completion "$RECONSTRUCTION_ID" 30 7200 | tail -1 || true)
 echo "[orchestrator] Job status: $JOB_STATUS"
 
 if [[ "$JOB_STATUS" == "failed" ]]; then
@@ -510,7 +539,7 @@ for ((i=1; i<=MAX_ITERATIONS; i++)); do
     echo "$RETRY_OUTPUT"
 
     # Wait for the pipeline to finish (agent may time out before training ends)
-    JOB_STATUS=$(wait_for_completion "$RECONSTRUCTION_ID" 30 2400 | tail -1)
+    JOB_STATUS=$(wait_for_completion "$RECONSTRUCTION_ID" 30 7200 | tail -1 || true)
     echo ""
     echo "[orchestrator] Job status after retry: $JOB_STATUS"
 
