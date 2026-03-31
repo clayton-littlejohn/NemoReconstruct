@@ -25,18 +25,6 @@ class ReconstructionParams(BaseModel):
     collision_mesh_target_faces: int | None = Field(default=None, ge=500, le=500000)
     collision_mesh_alpha: float | None = Field(default=None, ge=0.01, le=100.0)
     collision_mesh_downsample: int | None = Field(default=None, ge=1, le=64)
-    tsdf_mesh_enabled: bool | None = None
-    tsdf_voxel_size: float | None = Field(default=None, ge=0.005, le=0.5)
-    tsdf_truncation_distance: float | None = Field(default=None, ge=0.01, le=1.0)
-    tsdf_depth_image_size: int | None = Field(default=None, ge=128, le=2048)
-    tsdf_splat_radius: int | None = Field(default=None, ge=1, le=10)
-    tsdf_target_faces: int | None = Field(default=None, ge=1000, le=1000000)
-    tsdf_downsample: int | None = Field(default=None, ge=1, le=64)
-    mesh_extraction_method: str | None = Field(default=None, pattern="^(dlnr|basic|tsdf)$")
-    mesh_truncation_margin: float | None = Field(default=None, ge=0.001, le=1.0)
-    mesh_grid_shell_thickness: float | None = Field(default=None, ge=1.0, le=20.0)
-    mesh_dlnr_backbone: str | None = Field(default=None, pattern="^(middleburry|sceneflow)$")
-    mesh_image_downsample_factor: int | None = Field(default=None, ge=1, le=12)
     mesh_embed_in_usdz: bool | None = None
 
 

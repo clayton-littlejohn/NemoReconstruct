@@ -11,13 +11,9 @@ The `orchestrate.sh` script drives them in a loop: Runner executes → Evaluator
 
 | File | Purpose |
 |------|---------|
-| `orchestrate.sh` | Multi-agent orchestrator — drives the Agent A → Agent B loop |
+| `orchestrate.sh` | Multi-agent orchestrator — drives the Runner → Evaluator loop |
 | `sandbox-policy.yaml` | OpenShell sandbox policy — controls filesystem, process, and network access |
 | `sandbox-openclaw.json` | OpenClaw config — sets model, workspace, gateway, and tool permissions |
-| `runner_prompt.md` | Agent A system prompt — instructions for pipeline execution |
-| `evaluator_prompt.md` | Agent B system prompt — instructions for metric analysis and tuning |
-| `single_agent_prompt.md` | Standalone prompt for ad-hoc single-agent use (no orchestrator) |
-| `example_session.py` | Python SDK script to test the pipeline without any agent |
 | `sandbox-policy-template.yaml` | Starter policy — copy and customize for your own project |
 | `sandbox-openclaw-template.json` | Starter OpenClaw config — copy and customize for your own project |
 

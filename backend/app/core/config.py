@@ -49,19 +49,6 @@ class Settings(BaseSettings):
     collision_mesh_target_faces: int = 50000
     collision_mesh_alpha: float = 0.0  # 0 = auto
     collision_mesh_downsample: int = 4
-    tsdf_mesh_enabled: bool = True
-    tsdf_voxel_size: float = 0.01
-    tsdf_truncation_distance: float = 0.03
-    tsdf_depth_image_size: int = 1024
-    tsdf_splat_radius: int = 5
-    tsdf_target_faces: int = 200000
-    tsdf_downsample: int = 1
-    # DLNR / frgs mesh extraction (fVDB workflows)
-    mesh_extraction_method: str = "dlnr"  # "dlnr", "basic", or "tsdf" (legacy)
-    mesh_truncation_margin: float = 0.05
-    mesh_grid_shell_thickness: float = 3.0
-    mesh_dlnr_backbone: str = "middleburry"
-    mesh_image_downsample_factor: int = 1
     mesh_embed_in_usdz: bool = True
 
     model_config = SettingsConfigDict(
