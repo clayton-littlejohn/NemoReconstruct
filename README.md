@@ -4,7 +4,7 @@ A fully local Physical AI pipeline — upload a video, get an Omniverse-ready **
 
 The pipeline uses **NemoClaw** as the agentic orchestrator, **3DGRUT** for neural Gaussian reconstruction, and exports to the **Omniverse NuRec** format for physics simulation and collision visualization in Isaac Sim.
 
-> **This repo is a template.** The [setup guide](docs/NEMOCLAW_SETUP.md) shows how to pair NemoClaw + OpenShell with **any** repo or API — NemoReconstruct is just the example project.
+> **This repo is a template.** The [setup guide](nemoclaw/NEMOCLAW_SETUP.md) shows how to pair NemoClaw + OpenShell with **any** repo or API — NemoReconstruct is just the example project.
 >
 > **Walkthrough video:** [Watch the full setup on YouTube](https://www.youtube.com/watch?v=CGx_CR3WCyQ)
 
@@ -21,7 +21,7 @@ Video → ffmpeg → COLMAP → 3DGRUT → NuRec USDZ + PLY
 ## Quick Start
 
 > **Prerequisites:** Linux + NVIDIA GPU, Docker, Python 3.10+, Node.js 18+.
-> See [the full tutorial](docs/NEMOCLAW_SETUP.md) for step-by-step install of every prerequisite.
+> See [the full tutorial](nemoclaw/NEMOCLAW_SETUP.md) for step-by-step install of every prerequisite.
 
 ```bash
 # 1. Clone and install
@@ -59,7 +59,7 @@ openclaw agent --local --session-id demo \
 '
 ```
 
-**Full tutorial:** [docs/NEMOCLAW_SETUP.md](docs/NEMOCLAW_SETUP.md) — covers every step from a fresh machine, and shows how to adapt this for your own project.
+**Full tutorial:** [nemoclaw/NEMOCLAW_SETUP.md](nemoclaw/NEMOCLAW_SETUP.md) — covers every step from a fresh machine, and shows how to adapt this for your own project.
 
 ---
 
@@ -311,7 +311,7 @@ All paths are configurable via environment variables or a `.env` file in the bac
 
 ## Using This as a Template for Your Own Project
 
-The [full tutorial](docs/NEMOCLAW_SETUP.md) has a dedicated section (Part 2) that walks through connecting NemoClaw to **any** project:
+The [full tutorial](nemoclaw/NEMOCLAW_SETUP.md) has a dedicated section (Part 2) that walks through connecting NemoClaw to **any** project:
 
 1. **Start your service** on `0.0.0.0` (not `127.0.0.1`)
 2. **Create a sandbox policy** — allow the sandbox to reach your service's port

@@ -957,3 +957,9 @@ This tutorial builds on the following projects and research:
 - **[3D Gaussian Splatting](https://arxiv.org/abs/2308.04079)** — Real-time radiance field rendering via 3D Gaussians (Kerbl et al., SIGGRAPH 2023).
 - **[Ollama](https://ollama.com)** — Local LLM inference server.
 - **[DGX Spark](https://docs.nvidia.com/dgx/dgx-spark/)** — NVIDIA compact AI computer (GB10 Grace Blackwell Superchip, 128 GB unified memory).
+
+## Guides
+- [NemoClaw Installation Walkthrough](https://www.youtube.com/watch?v=N2LHg2-J3p8)
+- [Secure Long Running AI Agents with OpenShell on DGX Spark](https://build.nvidia.com/spark/openshell)
+- [Nemotron 3 Super — DGX Spark Deployment Guide
+](https://github.com/NVIDIA-NeMo/Nemotron/tree/main/usage-cookbook/Nemotron-3-Super/SparkDeploymentGuide)
