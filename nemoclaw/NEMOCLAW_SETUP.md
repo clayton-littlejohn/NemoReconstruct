@@ -96,10 +96,10 @@ ollama --version
 systemctl status ollama
 
 # Pull a model with tool-calling support
-ollama pull glm-4.7-flash
+ollama pull nemotron-3-nano
 ```
 
-> **Why glm-4.7-flash?** Reliable tool-calling support, 9B parameters, runs well on consumer GPUs and DGX Spark.
+> **Why nemotron-3-nano?** Reliable tool-calling support, runs well on consumer GPUs and DGX Spark.
 > Other good options: `qwen3.5`, `nemotron-3-super` (needs 48GB+ VRAM).
 
 ### Bind Ollama to all interfaces
@@ -125,7 +125,7 @@ sudo systemctl restart ollama
 Verify Ollama is serving the model:
 ```bash
 curl -s http://localhost:11434/v1/models | python3 -m json.tool
-# Should list glm-4.7-flash in the output
+# Should list nemotron-3-nano in the output
 ```
 
 ---
@@ -200,7 +200,7 @@ openshell provider get ollama
 Map the model name to the Ollama provider so sandboxes know where to send requests:
 
 ```bash
-openshell inference set --provider ollama --model glm-4.7-flash
+openshell inference set --provider ollama --model nemotron-3-nano
 ```
 
 Verify:
@@ -208,7 +208,7 @@ Verify:
 openshell inference get
 # Gateway inference:
 #   Provider: ollama
-#   Model: glm-4.7-flash
+#   Model: nemotron-3-nano
 ```
 
 ---
@@ -223,7 +223,7 @@ openshell sandbox create -- \
   --json '{"messages":[{"role":"user","content":"Say hello in one word"}],"max_tokens":10}'
 ```
 
-**Expected:** A JSON response containing `"model":"glm-4.7-flash"` and `"system_fingerprint":"fp_ollama"`.
+**Expected:** A JSON response containing `"model":"nemotron-3-nano"` and `"system_fingerprint":"fp_ollama"`.
 
 > **First run timeout:** The first sandbox after `gateway start` pulls the base container image inside the k3s cluster. This can take 3–5+ minutes and may exceed the default 300s timeout, giving you: `sandbox provisioning timed out after 300s. Last reported status: DependenciesNotReady`. **Just run the command again** — the image pull continues in the background and the next attempt will succeed. Subsequent sandboxes start in seconds.
 
@@ -362,8 +362,8 @@ Create a file called `sandbox-openclaw.json` in your project:
         "api": "openai-completions",
         "models": [
           {
-            "id": "glm-4.7-flash",
-            "name": "glm-4.7-flash",
+            "id": "nemotron-3-nano",
+            "name": "nemotron-3-nano",
             "reasoning": false,
             "input": ["text"],
             "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
@@ -377,7 +377,7 @@ Create a file called `sandbox-openclaw.json` in your project:
   "agents": {
     "defaults": {
       "model": {
-        "primary": "openai/glm-4.7-flash"
+        "primary": "openai/nemotron-3-nano"
       },
       "workspace": "/sandbox/my-project"
     }
@@ -876,7 +876,7 @@ openshell --version      # Should be >= 0.0.16
 ## Agent times out or loops
 
 - Increase `--timeout` (default 600 seconds)
-- Check that your model supports tool calling (`glm-4.7-flash` and `qwen3.5` do)
+- Check that your model supports tool calling (`nemotron-3-nano` and `qwen3.5` do)
 - Simplify the prompt — shorter, more specific messages get better results from smaller models
 
 ---
@@ -888,7 +888,7 @@ openshell --version      # Should be >= 0.0.16
 
 # 1. Install Ollama + model
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull glm-4.7-flash
+ollama pull nemotron-3-nano
 sudo systemctl edit ollama                          # Add: Environment="OLLAMA_HOST=0.0.0.0"
 sudo systemctl daemon-reload && sudo systemctl restart ollama
 
@@ -906,7 +906,7 @@ openshell provider create --name ollama \
   --config OPENAI_BASE_URL=http://host.openshell.internal:11434/v1
 
 # 5. Set inference routing
-openshell inference set --provider ollama --model glm-4.7-flash
+openshell inference set --provider ollama --model nemotron-3-nano
 
 # 6. Test inference from a sandbox
 openshell sandbox create -- \

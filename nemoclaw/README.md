@@ -78,4 +78,4 @@ After each reconstruction completes, the orchestrator:
    - Returns a JSON verdict: `ACCEPT` or `ITERATE` (with suggested parameter changes)
 4. The orchestrator parses the verdict. If ITERATE with no params, a default escalation strategy kicks in (double epochs/iterations, then reduce downsample factor)
 
-See [docs/NEMOCLAW_SETUP.md](../docs/NEMOCLAW_SETUP.md) for the full setup tutorial.
+See [NEMOCLAW_SETUP.md](./NEMOCLAW_SETUP.md) for the full setup tutorial.
