@@ -528,7 +528,13 @@ curl -s http://localhost:8010/health
 # {"status":"ok","service":"NemoReconstruct"}
 ```
 
----
+### Start the frontend
+
+```bash
+cd ~/NemoReconstruct
+make frontend-dev
+# Starts on localhost:3000
+```
 
 ## Download Dataset Scenes (Optional)
 
