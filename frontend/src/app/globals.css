@@ -517,12 +517,14 @@ thead th {
   color: var(--muted);
 }
 
-.wf-fields input {
+.wf-fields input,
+.wf-fields select {
   padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface-strong);
   font-size: 0.92rem;
+  color: inherit;
 }
 
 .wf-fields input[type="number"] {
@@ -538,6 +540,7 @@ thead th {
   border-radius: 16px;
   font-size: 0.9rem;
   white-space: nowrap;
+  margin-left: auto;
 }
 
 .wf-fields button:disabled {

@@ -21,7 +21,9 @@ import type { DatasetInfo, IterationHistoryResponse, IterationSummary, MetricsRe
 
 function formatTime(value: string | null): string {
   if (!value) return "-";
-  return new Date(value).toLocaleString();
+  // Backend returns UTC timestamps; append Z if no timezone marker so JS parses as UTC
+  const ts = /[Z+\-]\d{0,4}:?\d{0,2}$/.test(value) ? value : value + "Z";
+  return new Date(ts).toLocaleString();
 }
 
 function prettyStatus(value: string): string {
@@ -32,25 +34,23 @@ function prettyStatus(value: string): string {
 /* ── Workflow pipeline steps for visualization ── */
 const WORKFLOW_STEPS = [
   { key: "upload", label: "Upload", agents: [] as string[] },
-  { key: "runner-1", label: "Agent A (Runner)", agents: ["runner"] },
-  { key: "evaluator", label: "Agent B (Evaluator)", agents: ["evaluator"] },
-  { key: "runner-retry", label: "Agent A (Retry)", agents: ["runner"] },
+  { key: "reconstruct", label: "Reconstruct", agents: ["runner"] },
+  { key: "evaluator", label: "Evaluator Agent", agents: ["evaluator"] },
   { key: "done", label: "Done", agents: [] as string[] },
 ] as const;
 
 function agentDisplayName(agent: string | null): string {
-  if (agent === "runner") return "Agent A (Runner)";
-  if (agent === "evaluator") return "Agent B (Evaluator)";
+  if (agent === "runner") return "Reconstruct";
+  if (agent === "evaluator") return "Evaluator Agent";
   return agent ?? "";
 }
 
 function getActiveStepIndex(w: WorkflowDetail): number {
-  if (w.status === "completed") return 4;
+  if (w.status === "completed") return 3;
   if (w.status === "failed") return -1;
   if (w.status === "pending") return 0;
-  if (w.current_agent === "runner" && w.iteration <= 1) return 1;
+  if (w.current_agent === "runner") return 1;
   if (w.current_agent === "evaluator") return 2;
-  if (w.current_agent === "runner" && w.iteration > 1) return 3;
   return 1;
 }
 

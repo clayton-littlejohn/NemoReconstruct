@@ -640,18 +640,18 @@ openclaw agent --local --session-id demo \
 You can create as many sandboxes as you want, each with a different network policy. For example, one sandbox might only access the backend API, while another can also reach GitHub:
 
 ```bash
-# Sandbox A — using the NemoClaw policy
+# Sandbox 1 — using the NemoClaw policy
 openshell sandbox create \
   --from openclaw \
-  --name agent-a \
+  --name sandbox-1 \
   --policy nemoclaw/sandbox-policy.yaml \
   --upload "$PWD:/sandbox/NemoReconstruct" \
   --tty
 
-# Sandbox B — using a custom policy with different access
+# Sandbox 2 — using a custom policy with different access
 openshell sandbox create \
   --from openclaw \
-  --name agent-b \
+  --name sandbox-2 \
   --policy my-custom-policy.yaml \
   --upload "$PWD:/sandbox/NemoReconstruct" \
   --tty
@@ -661,8 +661,8 @@ Each sandbox is fully isolated — separate filesystem, separate network namespa
 
 ```
 ┌──────────────┐         ┌──────────────────┐         ┌──────────────┐
-│  Sandbox A   │────────►│  Host Service    │◄────────│  Sandbox B   │
-│  (policy A)  │  :8010  │  (0.0.0.0:8010)  │  :8010  │  (policy B)  │
+│  Sandbox 1   │────────►│  Host Service    │◄────────│  Sandbox 2   │
+│  (policy 1)  │  :8010  │  (0.0.0.0:8010)  │  :8010  │  (policy 2)  │
 └──────────────┘         └──────────────────┘         └──────────────┘
 ```
 
@@ -675,19 +675,17 @@ Both sandboxes need the host service endpoint in their respective policies. One 
 | File | Purpose |
 |------|---------|
 | `nemoclaw/sandbox-policy.yaml` | OpenShell sandbox policy — allows backend (:8010) and OpenClaw gateway (:18789) |
-| `nemoclaw/sandbox-openclaw-agent-a.json` | OpenClaw config for Agent A (Runner) — model → `nemotron-3-nano` |
-| `nemoclaw/sandbox-openclaw-agent-b.json` | OpenClaw config for Agent B (Evaluator) — model → `nemotron-3-nano` |
-| `nemoclaw/agent-a-prompt.md` | Agent A (Runner) system prompt — executes pipelines via API |
-| `nemoclaw/agent-b-prompt.md` | Agent B (Evaluator) system prompt — analyzes metrics, suggests parameter changes |
-| `nemoclaw/orchestrate.sh` | Multi-agent orchestrator — drives the Agent A → Agent B loop using LLM agents |
+| `nemoclaw/sandbox-openclaw-evaluator.json` | OpenClaw config for the evaluator agent — model → `nemotron-3-nano` |
+| `nemoclaw/agent-prompt.md` | Evaluator agent system prompt — analyzes metrics, suggests parameter changes |
+| `nemoclaw/orchestrate.sh` | Orchestrator — drives the reconstruct → evaluate → retry loop |
 | `nemoclaw/sandbox-policy-template.yaml` | Generic sandbox policy — copy and customize for your own project (Part 2) |
 | `nemoclaw/sandbox-openclaw-template.json` | Generic OpenClaw config — copy and customize for your own project (Part 2) |
 
 ---
 
-## Multi-Agent Iterative Workflow
+## Iterative Reconstruction Workflow
 
-This demonstrates two sandboxed agents collaborating through the shared backend API to iteratively improve a 3D reconstruction.
+The orchestrator drives iterative reconstruction by starting jobs via the API and launching an evaluator agent in a sandbox to analyze results.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -695,14 +693,14 @@ This demonstrates two sandboxed agents collaborating through the shared backend 
 │                                                                      │
 │  orchestrate.sh (loop)                                               │
 │    │                                                                 │
-│    ├──► Sandbox: Runner agent                                        │
+│    ├──► Start reconstruction via API (curl)                          │
 │    │      Uploads video, starts pipeline, polls to completion        │
 │    │                                                                 │
 │    ├──► Sandbox: Evaluator agent                                     │
 │    │      Reads metrics, analyzes quality, suggests new params       │
 │    │      Verdict: ACCEPT or ITERATE {new params}                    │
 │    │                                                                 │
-│    ├──► Sandbox: Runner agent (retry with evaluator's params)        │
+│    ├──► Retry reconstruction with evaluator's params (curl)          │
 │    │      ...                                                        │
 │    └──► (repeat until ACCEPT or max iterations)                      │
 │                                                                      │
@@ -711,10 +709,10 @@ This demonstrates two sandboxed agents collaborating through the shared backend 
 ```
 
 **Key points:**
-- Each agent runs in its **own isolated sandbox** — separate filesystem, network, process tree
-- Agents **never talk to each other directly** — the backend API is the shared state
-- The host-side orchestrator script drives the loop: Runner → Evaluator → Runner (retry) → ...
-- The Evaluator reads training metrics (loss, SSIM, num_gaussians) and reasons about parameter changes
+- The evaluator agent runs in an **isolated sandbox** — separate filesystem, network, process tree
+- The orchestrator starts and retries reconstructions directly via the API
+- The host-side orchestrator script drives the loop: Reconstruct → Evaluate → Retry → ...
+- The evaluator reads training metrics (loss, SSIM, num_gaussians) and reasons about parameter changes
 - After a configurable number of iterations, the workflow stops with the best result
 
 ### Run the workflow
@@ -725,19 +723,19 @@ cd ~/NemoReconstruct
 # Start the backend (if not already running)
 make backend-dev
 
-# Run the multi-agent workflow
+# Run the iterative workflow
 ./nemoclaw/orchestrate.sh ~/videos/my_scene.MOV "kitchen-scan" 3
 #                         ─── video path ───   ── name ──   ── max iterations ──
 ```
 
 ### What happens
 
-1. **Iteration 1:** Runner agent uploads the video and starts a reconstruction with default parameters. Polls until complete.
-2. **Evaluation 1:** Evaluator agent fetches the reconstruction details and training metrics (`/api/v1/reconstructions/{id}/metrics`). Analyzes loss convergence, SSIM, gaussian count. Outputs a verdict:
+1. **Iteration 1:** The orchestrator uploads the video and starts a reconstruction with default parameters. Polls until complete.
+2. **Evaluation 1:** The evaluator agent (in a sandbox) fetches the reconstruction details and training metrics (`/api/v1/reconstructions/{id}/metrics`). Analyzes loss convergence, SSIM, gaussian count. Outputs a verdict:
    - `ACCEPT` — quality is good enough, stop
    - `ITERATE` — suggests specific parameter changes (e.g., more epochs, higher frame rate)
-3. **Iteration 2:** Runner agent retries the reconstruction with the evaluator's suggested parameters. Polls until complete.
-4. **Evaluation 2:** Evaluator analyzes the new results. Accepts or suggests further changes.
+3. **Iteration 2:** The orchestrator retries the reconstruction with the evaluator's suggested parameters. Polls until complete.
+4. **Evaluation 2:** The evaluator agent analyzes the new results. Accepts or suggests further changes.
 5. Repeat up to `max_iterations` times.
 
 ### Monitoring & Audit Trail
@@ -753,17 +751,17 @@ The log includes full agent output and a **sandbox audit trail** for each agent 
 
 #### Live monitoring during a run
 
-While the orchestrator is running, each agent gets a named sandbox (`nemoclaw-agent-a-iter1`, `nemoclaw-agent-b-iter1`, etc.). You can stream logs live:
+While the orchestrator is running, each agent gets a named sandbox (`nemoclaw-runner-iter1`, `nemoclaw-evaluator-iter1`, etc.). You can stream logs live:
 
 ```bash
-# Watch Agent A (Runner) sandbox audit trail in real time
-openshell logs nemoclaw-agent-a-iter1 --source sandbox --tail
+# Watch runner sandbox audit trail in real time
+openshell logs nemoclaw-runner-iter1 --source sandbox --tail
 
-# Watch Agent B (Evaluator) sandbox audit trail
-openshell logs nemoclaw-agent-b-iter1 --source sandbox --tail
+# Watch evaluator agent sandbox audit trail
+openshell logs nemoclaw-evaluator-iter1 --source sandbox --tail
 
 # Filter to only policy decisions (allow/deny)
-openshell logs nemoclaw-agent-a-iter1 --source sandbox --tail 2>/dev/null \
+openshell logs nemoclaw-runner-iter1 --source sandbox --tail 2>/dev/null \
   | grep "action="
 ```
 
@@ -772,12 +770,12 @@ openshell logs nemoclaw-agent-a-iter1 --source sandbox --tail 2>/dev/null \
 The orchestrator captures the audit trail into the log file automatically. You can also review it manually:
 
 ```bash
-# Show all policy decisions for the last Agent A sandbox
-openshell logs nemoclaw-agent-a-iter1 --source sandbox -n 500 \
+# Show all policy decisions for the last runner sandbox
+openshell logs nemoclaw-runner-iter1 --source sandbox -n 500 \
   | grep "action="
 
 # Show gateway-level events
-openshell logs nemoclaw-agent-a-iter1 --source gateway -n 100
+openshell logs nemoclaw-runner-iter1 --source gateway -n 100
 ```
 
 Each audit line includes:

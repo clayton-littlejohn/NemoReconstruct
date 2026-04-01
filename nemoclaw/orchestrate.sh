@@ -412,7 +412,7 @@ echo " Step 1: Start Reconstruction"
 echo "============================================"
 echo ""
 
-update_workflow '{"status":"running","current_step":"starting reconstruction","iteration":1}'
+update_workflow '{"status":"running","current_step":"starting reconstruction","iteration":1,"current_agent":"runner"}'
 
 # Build form args into an array for safe quoting
 CURL_ARGS=()
@@ -546,7 +546,7 @@ for ((i=1; i<=MAX_ITERATIONS; i++)); do
     echo "============================================"
     echo "[orchestrator] Retrying with: $NEW_PARAMS"
 
-    update_workflow "{\"current_step\":\"retrying with new params\",\"iteration\":$((i+1))}"
+    update_workflow "{\"current_step\":\"retrying with new params\",\"iteration\":$((i+1)),\"current_agent\":\"runner\"}"
 
     # Retry via API
     RETRY_RESPONSE=$(curl -sf -X POST "${API_URL}/api/v1/reconstructions/${RECONSTRUCTION_ID}/retry" \
